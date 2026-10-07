@@ -116,6 +116,18 @@ func (f *Flusher) flushHour(ctx context.Context, signal string, hour time.Time) 
 	final := filepath.Join(f.DataDir, st.Path)
 	tmp := final + ".tmp"
 
+	// 0. Finish any earlier flush of this hour that was recorded but whose
+	// delete did not run, so its rows are not exported a second time.
+	prev, recorded, err := f.Manifest.MaxIngestCutoff(ctx, signal, hour)
+	if err != nil {
+		return st, false, err
+	}
+	if recorded {
+		if err := deleteHot(ctx, f.Store.DB(), signal, hour, prev); err != nil {
+			return st, false, err
+		}
+	}
+
 	// 1. Capture the cutoff and export the rows at or below it in one snapshot.
 	cutoff, ok, err := f.export(ctx, signal, hour, tmp)
 	if err != nil || !ok {
@@ -158,7 +170,7 @@ func (f *Flusher) flushHour(ctx context.Context, signal string, hour time.Time) 
 
 	// 4. Drop exactly the exported rows from hot.
 	delStart := time.Now()
-	if _, err := deleteHot(ctx, f.Store.DB(), signal, hour, cutoff); err != nil {
+	if err := deleteHot(ctx, f.Store.DB(), signal, hour, cutoff); err != nil {
 		return st, false, err
 	}
 	st.DeleteDuration = time.Since(delStart)
@@ -218,17 +230,12 @@ func (f *Flusher) export(ctx context.Context, signal string, hour time.Time, tmp
 	return cutoff.Time.UTC(), true, nil
 }
 
-func deleteHot(ctx context.Context, db *sql.DB, signal string, hour, cutoff time.Time) (int64, error) {
+func deleteHot(ctx context.Context, db *sql.DB, signal string, hour, cutoff time.Time) error {
 	q := fmt.Sprintf("DELETE FROM %s WHERE ts >= ? AND ts < ? AND ingest_ts <= ?", signal)
-	res, err := db.ExecContext(ctx, q, hour, hour.Add(time.Hour), cutoff)
-	if err != nil {
-		return 0, fmt.Errorf("delete hot %s: %w", signal, err)
+	if _, err := db.ExecContext(ctx, q, hour, hour.Add(time.Hour), cutoff); err != nil {
+		return fmt.Errorf("delete hot %s: %w", signal, err)
 	}
-	n, err := res.RowsAffected()
-	if err != nil {
-		return 0, fmt.Errorf("delete hot %s: %w", signal, err)
-	}
-	return n, nil
+	return nil
 }
 
 // describeFile reads a Parquet file's row count, time range, ingest cutoff,
