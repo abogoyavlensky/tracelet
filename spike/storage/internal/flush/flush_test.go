@@ -224,3 +224,32 @@ func suffixes(t *testing.T, dataDir string) []string {
 	}
 	return out
 }
+
+func TestRetryAfterFailedDeleteDoesNotDuplicate(t *testing.T) {
+	t.Parallel()
+	e, _ := ingest3h(t)
+	ctx := t.Context()
+	hot := e.HotCount(t, "logs", h0, h1)
+
+	e.Flusher.Hook = func(step string) error {
+		if step == flush.StepRecorded {
+			return errors.New("delete never ran")
+		}
+		return nil
+	}
+	_, err := e.Flusher.FlushDue(ctx, h2)
+	require.Error(t, err)
+
+	e.Flusher.Hook = nil
+	_, err = e.Flusher.FlushDue(ctx, h2)
+	require.NoError(t, err)
+
+	files, err := e.Manifest.FilesFor(ctx, "logs", h0, h1)
+	require.NoError(t, err)
+	var cold int64
+	for _, f := range files {
+		cold += f.Rows
+	}
+	assert.Equal(t, hot, cold, "every hour-0 log is in cold exactly once")
+	assert.Zero(t, e.HotCount(t, "logs", h0, h1))
+}
