@@ -72,6 +72,9 @@ func Open(dataDir string, limits Limits) (*Store, error) {
 		fmt.Sprintf("SET GLOBAL threads = %d", limits.Threads),
 		fmt.Sprintf("SET GLOBAL temp_directory = '%s'", strings.ReplaceAll(tmpDir, "'", "''")),
 		"SET GLOBAL preserve_insertion_order = false",
+		// Hot timestamps are naive UTC; pin the zone so any TIMESTAMPTZ
+		// parameter casts the same way on every host.
+		"SET GLOBAL TimeZone = 'UTC'",
 	}
 	connector, err := duckdb.NewConnector(filepath.Join(dataDir, "hot.duckdb"), func(execer driver.ExecerContext) error {
 		for _, q := range boot {
