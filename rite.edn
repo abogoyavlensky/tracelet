@@ -1,0 +1,63 @@
+{:tasks
+ {setup       {:doc "Install the toolchain and frontend dependencies"
+               :do [{:sh "mise install"}
+                    {:task web-install}]}
+
+  fmt         {:doc "Format Go and frontend sources"
+               :do [{:sh "golangci-lint fmt"}
+                    {:task web-fmt}]}
+
+  fmt-check   {:doc "Fail if any source is not formatted"
+               :do [{:sh "golangci-lint fmt --diff"}
+                    {:task web-fmt-check}]}
+
+  lint        {:doc "Lint Go (golangci-lint) and frontend (oxlint, tsc)"
+               :do [{:sh "golangci-lint run"}
+                    {:task web-lint}]}
+
+  test        {:doc "Run Go and frontend tests"
+               :do [{:sh "go test -race ./..."}
+                    {:task web-test}]}
+
+  check       {:doc "Everything CI runs: fmt-check, lint, test"
+               :depends [fmt-check lint test]}
+
+  build       {:doc "Build the frontend and the server binary into bin/"
+               :depends [web-build]
+               :do {:sh "go build -trimpath -ldflags \"-s -w -X main.version=$(git describe --tags --always --dirty)\" -o bin/tracelet ./cmd/tracelet"}}
+
+  dev         {:doc "Run the server from source on :8080 (serves the last frontend build)"
+               :do {:sh "go run ./cmd/tracelet serve --data-dir ./data"}}
+
+  clean       {:doc "Remove build output"
+               :do [{:sh "rm -rf bin"}
+                    {:sh "find internal/web/dist -mindepth 1 ! -name .gitkeep -delete"}]}
+
+  web-install {:doc "Install frontend dependencies from the lockfile"
+               :cwd "web"
+               :do {:sh "npm ci"}}
+
+  web-dev     {:doc "Run the Vite dev server on :5173, proxying /api to :8080"
+               :cwd "web"
+               :do {:sh "npm run dev"}}
+
+  web-build   {:doc "Build hashed frontend assets into internal/web/dist"
+               :cwd "web"
+               :do {:sh "npm run build"}}
+
+  web-fmt     {:private? true
+               :cwd "web"
+               :do {:sh "npm run fmt"}}
+
+  web-fmt-check {:private? true
+                 :cwd "web"
+                 :do {:sh "npm run fmt:check"}}
+
+  web-lint    {:private? true
+               :cwd "web"
+               :do [{:sh "npm run lint"}
+                    {:sh "npm run typecheck"}]}
+
+  web-test    {:private? true
+               :cwd "web"
+               :do {:sh "npm test"}}}}
