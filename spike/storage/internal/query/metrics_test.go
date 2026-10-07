@@ -191,7 +191,32 @@ func TestInterpolateEdges(t *testing.T) {
 	_, ok := query.Interpolate(bounds, []float64{0, 0, 0, 0}, 0.5)
 	assert.False(t, ok)
 
+	_, ok = query.Interpolate(nil, []float64{5}, 0.5)
+	assert.False(t, ok, "no finite bounds")
+
 	v, ok := query.Interpolate(bounds, []float64{4, 0, 0, 0}, 0.5)
 	assert.True(t, ok)
 	assert.InDelta(t, 5, v, 1e-9, "first bucket interpolates from zero")
+}
+
+func TestHistogramBoundsChangeIsNotSubtracted(t *testing.T) {
+	t.Parallel()
+	storages(t, func(t *testing.T, cold bool) {
+		r := withPoints(t, cold, []telemetry.MetricPoint{
+			histPoint(1, 0, []float64{5, 10}, []uint64{1, 1, 1}),
+			histPoint(1, 1, bounds, []uint64{3, 7, 3, 1}), // re-bucketed: seeds only
+			histPoint(1, 2, bounds, []uint64{5, 9, 9, 7}), // delta [2, 2, 6, 6]
+		})
+
+		rate, err := r.RequestRate(t.Context(), "duration", minute(1), minute(3), time.Minute, time.Minute)
+		require.NoError(t, err)
+		assert.Equal(t, []float64{16}, steps(rate))
+
+		got, err := r.HistogramQuantile(t.Context(), "duration", 0.5, minute(1), minute(3), time.Minute)
+		require.NoError(t, err)
+		assert.True(t, got.OK)
+		assert.Empty(t, got.IncompatibleSeries)
+		// rank 8 in (50, 100] with 4 before and 6 in it.
+		assert.InDelta(t, 50+50*4.0/6, got.Value, 1e-9)
+	})
 }
