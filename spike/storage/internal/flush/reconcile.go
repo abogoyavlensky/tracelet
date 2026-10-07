@@ -201,12 +201,28 @@ func (f *Flusher) Verify(ctx context.Context) (VerifyReport, error) {
 	if err != nil {
 		return rep, err
 	}
+	onDisk, _, err := scanTelemetry(f.DataDir)
+	if err != nil {
+		return rep, err
+	}
+	present := map[string]bool{}
+	for _, rel := range onDisk {
+		present[rel] = true
+	}
+
+	// Compare first so a missing file is reported rather than failing the
+	// cold read; the counts then cover only the files that exist.
 	bySignal := map[string][]string{}
 	var recorded []string
 	for _, file := range files {
-		bySignal[file.Signal] = append(bySignal[file.Signal], filepath.Join(f.DataDir, file.Path))
 		recorded = append(recorded, file.Path)
+		if present[file.Path] {
+			bySignal[file.Signal] = append(bySignal[file.Signal], filepath.Join(f.DataDir, file.Path))
+		}
 	}
+	rep.Missing = difference(recorded, onDisk)
+	rep.Unrecorded = difference(onDisk, recorded)
+	rep.PathsMatch = len(rep.Missing) == 0 && len(rep.Unrecorded) == 0
 
 	for _, signal := range store.Signals {
 		cold := "SELECT * FROM " + signal + " WHERE false"
@@ -224,14 +240,6 @@ func (f *Flusher) Verify(ctx context.Context) (VerifyReport, error) {
 		}
 		rep.Signals[signal] = c
 	}
-
-	onDisk, _, err := scanTelemetry(f.DataDir)
-	if err != nil {
-		return rep, err
-	}
-	rep.Missing = difference(recorded, onDisk)
-	rep.Unrecorded = difference(onDisk, recorded)
-	rep.PathsMatch = len(rep.Missing) == 0 && len(rep.Unrecorded) == 0
 	return rep, nil
 }
 

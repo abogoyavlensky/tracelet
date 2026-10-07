@@ -334,3 +334,22 @@ func suffixesOf(t *testing.T, dataDir, suffix string) []string {
 	}
 	return out
 }
+
+func TestVerifyReportsMissingFile(t *testing.T) {
+	t.Parallel()
+	e, _ := ingest3h(t)
+	ctx := t.Context()
+	_, err := e.Flusher.FlushDue(ctx, h2)
+	require.NoError(t, err)
+
+	files, err := e.Manifest.FilesFor(ctx, "logs", h0, h1)
+	require.NoError(t, err)
+	require.Len(t, files, 1)
+	require.NoError(t, os.Remove(filepath.Join(e.DataDir, files[0].Path)))
+
+	rep, err := e.Flusher.Verify(ctx)
+	require.NoError(t, err)
+	assert.False(t, rep.PathsMatch)
+	assert.Equal(t, []string{files[0].Path}, rep.Missing)
+	assert.Zero(t, rep.Signals["logs"].Cold)
+}
