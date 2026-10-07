@@ -253,3 +253,84 @@ func TestRetryAfterFailedDeleteDoesNotDuplicate(t *testing.T) {
 	assert.Equal(t, hot, cold, "every hour-0 log is in cold exactly once")
 	assert.Zero(t, e.HotCount(t, "logs", h0, h1))
 }
+
+func TestReconcileAfterCrashAtEachStep(t *testing.T) {
+	t.Parallel()
+	for _, step := range []string{flush.StepWritten, flush.StepRenamed, flush.StepRecorded, flush.StepDeleted} {
+		t.Run(step, func(t *testing.T) {
+			t.Parallel()
+			e, counts := ingest3h(t)
+			ctx := t.Context()
+
+			e.Flusher.Hook = func(s string) error {
+				if s == step {
+					return errors.New("crash")
+				}
+				return nil
+			}
+			_, err := e.Flusher.FlushDue(ctx, h3)
+			require.ErrorContains(t, err, "hook at "+step)
+
+			// Rows for the crashed hour that arrive after the export are not in
+			// any file, so reconcile must leave them alone.
+			e.Flusher.Hook = nil
+			e.Write(t, telemetry.Batch{Logs: []telemetry.Log{testenv.LateLog(h0.Add(10*time.Minute), lateSeq)}}, counts)
+
+			// Restart.
+			dataDir := e.DataDir
+			e.Close()
+			e = testenv.Open(t, dataDir)
+
+			_, err = e.Flusher.Reconcile(ctx)
+			require.NoError(t, err)
+			rep, err := e.Flusher.Verify(ctx)
+			require.NoError(t, err)
+
+			for _, signal := range store.Signals {
+				c := rep.Signals[signal]
+				assert.Equal(t, counts[signal], c.Total, "%s: nothing lost", signal)
+				assert.Equal(t, counts[signal], c.DistinctKeys, "%s: nothing duplicated", signal)
+				assert.Equal(t, c.Hot+c.Cold, c.Total, signal)
+			}
+			assert.True(t, rep.PathsMatch, "missing %v, unrecorded %v", rep.Missing, rep.Unrecorded)
+			assert.Empty(t, suffixesOf(t, dataDir, ".parquet.tmp"))
+		})
+	}
+}
+
+func TestReconcileReportsRepairs(t *testing.T) {
+	t.Parallel()
+	e, _ := ingest3h(t)
+	ctx := t.Context()
+
+	e.Flusher.Hook = func(s string) error {
+		if s == flush.StepRenamed {
+			return errors.New("crash")
+		}
+		return nil
+	}
+	_, err := e.Flusher.FlushDue(ctx, h2)
+	require.Error(t, err)
+
+	rep, err := e.Flusher.Reconcile(ctx)
+	require.NoError(t, err)
+	assert.Equal(t, 1, rep.Adopted)
+	assert.Positive(t, rep.HotRowsDeleted)
+
+	files, err := e.Manifest.All(ctx)
+	require.NoError(t, err)
+	require.Len(t, files, 1)
+	assert.Equal(t, h0, files[0].Hour)
+	assert.Equal(t, "logs", files[0].Signal)
+}
+
+func suffixesOf(t *testing.T, dataDir, suffix string) []string {
+	t.Helper()
+	var out []string
+	for _, s := range suffixes(t, dataDir) {
+		if s == suffix {
+			out = append(out, s)
+		}
+	}
+	return out
+}

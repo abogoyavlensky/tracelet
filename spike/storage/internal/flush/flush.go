@@ -123,7 +123,7 @@ func (f *Flusher) flushHour(ctx context.Context, signal string, hour time.Time) 
 		return st, false, err
 	}
 	if recorded {
-		if err := deleteHot(ctx, f.Store.DB(), signal, hour, prev); err != nil {
+		if _, err := deleteHot(ctx, f.Store.DB(), signal, hour, prev); err != nil {
 			return st, false, err
 		}
 	}
@@ -170,7 +170,7 @@ func (f *Flusher) flushHour(ctx context.Context, signal string, hour time.Time) 
 
 	// 4. Drop exactly the exported rows from hot.
 	delStart := time.Now()
-	if err := deleteHot(ctx, f.Store.DB(), signal, hour, cutoff); err != nil {
+	if _, err := deleteHot(ctx, f.Store.DB(), signal, hour, cutoff); err != nil {
 		return st, false, err
 	}
 	st.DeleteDuration = time.Since(delStart)
@@ -230,12 +230,17 @@ func (f *Flusher) export(ctx context.Context, signal string, hour time.Time, tmp
 	return cutoff.Time.UTC(), true, nil
 }
 
-func deleteHot(ctx context.Context, db *sql.DB, signal string, hour, cutoff time.Time) error {
+func deleteHot(ctx context.Context, db *sql.DB, signal string, hour, cutoff time.Time) (int64, error) {
 	q := fmt.Sprintf("DELETE FROM %s WHERE ts >= ? AND ts < ? AND ingest_ts <= ?", signal)
-	if _, err := db.ExecContext(ctx, q, hour, hour.Add(time.Hour), cutoff); err != nil {
-		return fmt.Errorf("delete hot %s: %w", signal, err)
+	res, err := db.ExecContext(ctx, q, hour, hour.Add(time.Hour), cutoff)
+	if err != nil {
+		return 0, fmt.Errorf("delete hot %s: %w", signal, err)
 	}
-	return nil
+	n, err := res.RowsAffected()
+	if err != nil {
+		return 0, fmt.Errorf("delete hot %s: %w", signal, err)
+	}
+	return n, nil
 }
 
 // describeFile reads a Parquet file's row count, time range, ingest cutoff,
