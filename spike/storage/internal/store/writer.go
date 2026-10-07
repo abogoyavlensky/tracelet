@@ -80,6 +80,9 @@ func (w *Writer) Write(ctx context.Context, batch telemetry.Batch) (CommitStats,
 		return CommitStats{}, fmt.Errorf("begin: %w", err)
 	}
 	if err := w.appendAll(batch, stamp); err != nil {
+		// ROLLBACK does not touch the appenders' own buffers; without Clear the
+		// rejected rows would be flushed by the next Write.
+		w.clear()
 		_, _ = w.conn.ExecContext(context.WithoutCancel(ctx), "ROLLBACK")
 		return CommitStats{}, err
 	}
@@ -140,6 +143,12 @@ func (w *Writer) appendAll(batch telemetry.Batch, stamp time.Time) error {
 		}
 	}
 	return nil
+}
+
+func (w *Writer) clear() {
+	for _, a := range []*duckdb.Appender{w.logs, w.spans, w.points} {
+		_ = a.Clear()
+	}
 }
 
 // Close closes the appenders and the connection.

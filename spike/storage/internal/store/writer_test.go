@@ -116,3 +116,20 @@ func TestWriterStampsIncrease(t *testing.T) {
 		assert.True(t, stamps[i].After(stamps[i-1]), "stamp %d not after %d", i, i-1)
 	}
 }
+
+func TestWriterFailedBatchDoesNotLeak(t *testing.T) {
+	s := openStore(t)
+	w, err := store.NewWriter(t.Context(), s)
+	require.NoError(t, err)
+	t.Cleanup(func() { _ = w.Close() })
+
+	bad := sampleBatch(time.Now().UTC())
+	bad.Logs[2].TS = time.Date(300000, 1, 1, 0, 0, 0, 0, time.UTC) // out of TIMESTAMP range
+	_, err = w.Write(t.Context(), bad)
+	require.Error(t, err)
+
+	_, err = w.Write(t.Context(), telemetry.Batch{Logs: sampleBatch(time.Now().UTC()).Logs[:1]})
+	require.NoError(t, err)
+
+	assert.Equal(t, 1, countRows(t, s, "logs"))
+}
