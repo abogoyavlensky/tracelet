@@ -18,3 +18,7 @@ coverage.out
 .idea/
 .vscode/
 .DS_Store
+
+# Storage spike
+spike/storage/bin/
+.tmp/
