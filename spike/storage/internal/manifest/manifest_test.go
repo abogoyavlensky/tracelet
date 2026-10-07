@@ -1,6 +1,7 @@
 package manifest_test
 
 import (
+	"os"
 	"path/filepath"
 	"testing"
 	"time"
@@ -129,4 +130,17 @@ func TestMaxIngestCutoff(t *testing.T) {
 	require.NoError(t, err)
 	assert.True(t, ok)
 	assert.Equal(t, second.MaxIngestTS, cutoff)
+}
+
+func TestOpenPathWithURICharacters(t *testing.T) {
+	dir := filepath.Join(t.TempDir(), "odd?dir#1%20")
+	require.NoError(t, os.MkdirAll(dir, 0o755))
+	path := filepath.Join(dir, "manifest.sqlite")
+
+	m, err := manifest.Open(path)
+	require.NoError(t, err)
+	require.NoError(t, m.Add(t.Context(), file("logs", h0, "a.parquet", 1)))
+	require.NoError(t, m.Close())
+
+	assert.FileExists(t, path)
 }

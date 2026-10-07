@@ -7,6 +7,7 @@ import (
 	"database/sql"
 	"errors"
 	"fmt"
+	"net/url"
 	"time"
 
 	"modernc.org/sqlite"
@@ -66,7 +67,10 @@ func formatHour(t time.Time) string { return t.UTC().Format(hourLayout) }
 
 // Open opens or creates the manifest database at path.
 func Open(path string) (*Manifest, error) {
-	db, err := sql.Open("sqlite", "file:"+path+"?_pragma=journal_mode(WAL)&_pragma=busy_timeout(5000)")
+	// SQLite decodes %XX in URI paths, so escaping keeps '?' and '#' in a
+	// directory name from being read as the query or fragment.
+	dsn := "file:" + url.PathEscape(path) + "?_pragma=journal_mode(WAL)&_pragma=busy_timeout(5000)"
+	db, err := sql.Open("sqlite", dsn)
 	if err != nil {
 		return nil, fmt.Errorf("open manifest: %w", err)
 	}
