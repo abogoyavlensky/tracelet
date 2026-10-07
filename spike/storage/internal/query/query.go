@@ -71,6 +71,14 @@ func parquetSource(files []string) string {
 
 // source resolves the cold files for [from, to) from the manifest and builds
 // the subquery.
+//
+// The manifest read and the DuckDB query are not one snapshot, so a query
+// that overlaps a flush of an hour in its range can be wrong for that hour:
+// between the manifest insert and the hot DELETE it sees the rows twice
+// (design decision 12), and if it reads the manifest before the insert but
+// scans hot after the DELETE it misses them. The spike accepts both and
+// records them; phase 1 decides the protocol (a shared read lock, or
+// filtering hot rows by the recorded cutoff against a pinned snapshot).
 func (r Reader) source(ctx context.Context, signal string, from, to time.Time) (string, []any, error) {
 	if err := store.CheckSignal(signal); err != nil {
 		return "", nil, err
