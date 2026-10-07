@@ -37,7 +37,8 @@ lagged AS (
          lag(start_ts) OVER w AS prev_start,
          lag(v) OVER w AS prev_v,
          lag(c) OVER w AS prev_c,
-         lag(b) OVER w AS prev_b
+         lag(b) OVER w AS prev_b,
+         lag(bucket_bounds) OVER w AS prev_bounds
   FROM pts
   WINDOW w AS (PARTITION BY series_hash ORDER BY ts)
 ),
@@ -46,7 +47,8 @@ classified AS (
          temporality = 1 AS is_delta,
          coalesce(start_ts IS DISTINCT FROM prev_start, false)
            OR coalesce(v < prev_v, false)
-           OR coalesce(c < prev_c, false) AS is_reset
+           OR coalesce(c < prev_c, false) AS is_reset,
+         coalesce(bucket_bounds IS DISTINCT FROM prev_bounds, false) AS bounds_changed
   FROM lagged
 ),
 deltas AS (
@@ -56,7 +58,7 @@ deltas AS (
          CASE WHEN is_delta OR is_reset THEN b
               ELSE list_transform(range(1, len(b) + 1), lambda i: b[i] - prev_b[i]) END AS db
   FROM classified
-  WHERE (is_delta OR prev_ts IS NOT NULL) AND ts >= ?
+  WHERE (is_delta OR (prev_ts IS NOT NULL AND NOT bounds_changed)) AND ts >= ?
 )`
 
 // deltasQuery returns the WITH clause over a signal source and the arguments
@@ -212,10 +214,11 @@ func (r Reader) HistogramQuantile(ctx context.Context, name string, q float64, f
 // has one more element than bounds; bucket i covers (bounds[i-1], bounds[i]],
 // the first starts at 0 (or at its bound if that is not positive), and the
 // last is unbounded. A rank in the unbounded bucket returns the last finite
-// bound, as Prometheus does. ok is false for an empty histogram.
+// bound, as Prometheus does. ok is false for an empty histogram and for one
+// with no finite bounds, which has nothing to interpolate between.
 func Interpolate(bounds, counts []float64, q float64) (float64, bool) {
 	total := sum(counts)
-	if total <= 0 || len(counts) != len(bounds)+1 {
+	if total <= 0 || len(bounds) == 0 || len(counts) != len(bounds)+1 {
 		return 0, false
 	}
 	rank := q * total
