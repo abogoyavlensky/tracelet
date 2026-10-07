@@ -126,6 +126,7 @@ type Generator struct {
 	series  []*series
 
 	resourceDay int64
+	version     string            // service version for resourceDay
 	resources   map[string]string // service|environment -> resource JSON for resourceDay
 }
 
@@ -246,7 +247,7 @@ func (g *Generator) span(svc int, env, traceID, parentID string, start time.Time
 		Project:      project,
 		Service:      serviceName(svc),
 		Environment:  env,
-		Version:      version(start),
+		Version:      g.version,
 		TraceID:      traceID,
 		SpanID:       g.hex(1),
 		ParentSpanID: parentID,
@@ -292,7 +293,7 @@ func (g *Generator) logs(now time.Time, spans []telemetry.Span) []telemetry.Log 
 			Project:        project,
 			Service:        serviceName(svc),
 			Environment:    env,
-			Version:        version(ts),
+			Version:        g.version, // the emitting process's version, even for late rows
 			SeverityNumber: sev.number,
 			SeverityText:   sev.text,
 			Body:           fmt.Sprintf("%s handled %s for user %d", serviceName(svc), route, g.rng.IntN(10000)),
@@ -345,7 +346,7 @@ func (g *Generator) point(s *series, now time.Time) telemetry.MetricPoint {
 		Project:     project,
 		Service:     serviceName(s.service),
 		Environment: s.environment,
-		Version:     version(now),
+		Version:     g.version,
 		Name:        s.name,
 		SeriesHash:  s.hash,
 		Resource:    g.resource(s.service, s.environment),
@@ -425,11 +426,12 @@ func (g *Generator) refreshResources(now time.Time) {
 		return
 	}
 	g.resourceDay = day
+	g.version = version(now)
 	g.resources = make(map[string]string)
 	for svc := range g.profile.Services {
 		for _, env := range environments[:g.profile.Environments] {
 			g.resources[serviceName(svc)+"|"+env] = mustJSON(resourceAttrs{
-				ServiceName: serviceName(svc), Environment: env, Version: version(now),
+				ServiceName: serviceName(svc), Environment: env, Version: g.version,
 				Instance: instanceID(svc, env), SDK: "go",
 			})
 		}
