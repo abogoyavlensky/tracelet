@@ -80,7 +80,20 @@ func (e *Env) Close() {
 // would land before Start are dropped so tests can reason about exact hours.
 func (e *Env) Ingest(t *testing.T, g *gen.Generator, dur time.Duration) Counts {
 	t.Helper()
+	counts, _ := e.ingest(t, g, dur, false)
+	return counts
+}
+
+// IngestBatches is Ingest that also returns every batch it wrote.
+func (e *Env) IngestBatches(t *testing.T, g *gen.Generator, dur time.Duration) (Counts, []telemetry.Batch) {
+	t.Helper()
+	return e.ingest(t, g, dur, true)
+}
+
+func (e *Env) ingest(t *testing.T, g *gen.Generator, dur time.Duration, keep bool) (Counts, []telemetry.Batch) {
+	t.Helper()
 	counts := Counts{}
+	var written []telemetry.Batch
 	var batch telemetry.Batch
 	flushBatch := func() {
 		if batch.Len() == 0 {
@@ -91,6 +104,9 @@ func (e *Env) Ingest(t *testing.T, g *gen.Generator, dur time.Duration) Counts {
 		counts["logs"] += int64(len(batch.Logs))
 		counts["spans"] += int64(len(batch.Spans))
 		counts["metric_points"] += int64(len(batch.Points))
+		if keep {
+			written = append(written, batch)
+		}
 		batch = telemetry.Batch{}
 	}
 	for sec := range int(dur / time.Second) {
@@ -107,7 +123,7 @@ func (e *Env) Ingest(t *testing.T, g *gen.Generator, dur time.Duration) Counts {
 		}
 	}
 	flushBatch()
-	return counts
+	return counts, written
 }
 
 // Write writes one batch and adds it to counts.
