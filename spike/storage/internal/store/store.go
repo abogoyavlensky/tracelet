@@ -7,6 +7,7 @@ import (
 	"database/sql"
 	"database/sql/driver"
 	"fmt"
+	"net/url"
 	"os"
 	"path/filepath"
 	"strings"
@@ -71,11 +72,13 @@ func Open(dataDir string, limits Limits) (*Store, error) {
 	}
 
 	// Settings are global, so re-applying them on every new pooled connection
-	// is harmless and keeps the first connection from racing the rest.
+	// is harmless and keeps the first connection from racing the rest. The
+	// temp directory is the exception: DuckDB refuses to set it again once
+	// it has been used, so it goes into the DSN and is set once, when the
+	// database is created.
 	boot := []string{
 		fmt.Sprintf("SET GLOBAL memory_limit = '%s'", limits.MemoryLimit),
 		fmt.Sprintf("SET GLOBAL threads = %d", limits.Threads),
-		fmt.Sprintf("SET GLOBAL temp_directory = '%s'", strings.ReplaceAll(tmpDir, "'", "''")),
 		"SET GLOBAL preserve_insertion_order = false",
 		// Hot timestamps are naive UTC; pin the zone so any TIMESTAMPTZ
 		// parameter casts the same way on every host.
@@ -88,7 +91,8 @@ func Open(dataDir string, limits Limits) (*Store, error) {
 	if limits.AllocatorBackgroundThreads {
 		boot = append(boot, "SET GLOBAL allocator_background_threads = true")
 	}
-	connector, err := duckdb.NewConnector(filepath.Join(dataDir, "hot.duckdb"), func(execer driver.ExecerContext) error {
+	dsn := filepath.Join(dataDir, "hot.duckdb") + "?" + url.Values{"temp_directory": {tmpDir}}.Encode()
+	connector, err := duckdb.NewConnector(dsn, func(execer driver.ExecerContext) error {
 		for _, q := range boot {
 			if _, err := execer.ExecContext(context.Background(), q, nil); err != nil {
 				return fmt.Errorf("%s: %w", q, err)
