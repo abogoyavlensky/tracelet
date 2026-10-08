@@ -81,6 +81,7 @@ type Report struct {
 	WallSeconds     float64            `json:"wall_seconds"`
 	Rows            map[string]int64   `json:"rows"`
 	Commits         Summary            `json:"commit_latency"`
+	CatchUpSeconds  int                `json:"catch_up_seconds,omitempty"` // real-time seconds generated late after dropped ticks
 	Flushes         Summary            `json:"flush_duration"`
 	Deletes         Summary            `json:"flush_delete_duration"`
 	RetentionRuns   Summary            `json:"retention_duration"`
