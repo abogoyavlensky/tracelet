@@ -39,6 +39,12 @@ type Flusher struct {
 	Store    *store.Store
 	Manifest *manifest.Manifest
 	DataDir  string
+	// RowGroupSize, when positive, sets the Parquet ROW_GROUP_SIZE of flushed
+	// files; zero keeps DuckDB's default.
+	RowGroupSize int
+	// Unsorted drops ORDER BY ts from the flush. Sorted files are a design
+	// property; this exists only to measure what the sort costs.
+	Unsorted bool
 	// Hook, when set, runs after each step; an error aborts the flush there.
 	// Tests use it to simulate a crash at each step.
 	Hook func(step string) error
@@ -220,16 +226,27 @@ func (f *Flusher) export(ctx context.Context, signal string, hour time.Time, tmp
 		return time.Time{}, false, nil
 	}
 
-	copySQL := fmt.Sprintf(
-		"COPY (SELECT * FROM %s WHERE ts >= %s AND ts < %s AND ingest_ts <= %s ORDER BY ts) TO %s (FORMAT parquet, COMPRESSION zstd)",
-		signal, tsLiteral(hour), tsLiteral(hour.Add(time.Hour)), tsLiteral(cutoff.Time), quote(tmp))
-	if _, err := tx.ExecContext(ctx, copySQL); err != nil {
+	if _, err := tx.ExecContext(ctx, f.copyStatement(signal, hour, cutoff.Time, tmp)); err != nil {
 		return time.Time{}, false, fmt.Errorf("copy %s: %w", signal, err)
 	}
 	if err := tx.Commit(); err != nil {
 		return time.Time{}, false, fmt.Errorf("commit export: %w", err)
 	}
 	return cutoff.Time.UTC(), true, nil
+}
+
+// copyStatement is the COPY that writes one hour's rows up to cutoff to tmp.
+func (f *Flusher) copyStatement(signal string, hour, cutoff time.Time, tmp string) string {
+	order := " ORDER BY ts"
+	if f.Unsorted {
+		order = ""
+	}
+	options := "FORMAT parquet, COMPRESSION zstd"
+	if f.RowGroupSize > 0 {
+		options += fmt.Sprintf(", ROW_GROUP_SIZE %d", f.RowGroupSize)
+	}
+	return fmt.Sprintf("COPY (SELECT * FROM %s WHERE ts >= %s AND ts < %s AND ingest_ts <= %s%s) TO %s (%s)",
+		signal, tsLiteral(hour), tsLiteral(hour.Add(time.Hour)), tsLiteral(cutoff), order, quote(tmp), options)
 }
 
 func deleteHot(ctx context.Context, db *sql.DB, signal string, hour, cutoff time.Time) (int64, error) {

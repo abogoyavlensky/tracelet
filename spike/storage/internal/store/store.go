@@ -22,6 +22,11 @@ var Signals = []string{"logs", "spans", "metric_points"}
 type Limits struct {
 	MemoryLimit string // DuckDB size string, e.g. "256MB"
 	Threads     int
+	// AllocatorFlushThreshold, when set, is DuckDB's allocator_flush_threshold
+	// size string; empty keeps DuckDB's default.
+	AllocatorFlushThreshold string
+	// AllocatorBackgroundThreads turns on allocator_background_threads.
+	AllocatorBackgroundThreads bool
 }
 
 // Store is the hot DuckDB database under a data directory.
@@ -75,6 +80,13 @@ func Open(dataDir string, limits Limits) (*Store, error) {
 		// Hot timestamps are naive UTC; pin the zone so any TIMESTAMPTZ
 		// parameter casts the same way on every host.
 		"SET GLOBAL TimeZone = 'UTC'",
+	}
+	if limits.AllocatorFlushThreshold != "" {
+		boot = append(boot, fmt.Sprintf("SET GLOBAL allocator_flush_threshold = '%s'",
+			strings.ReplaceAll(limits.AllocatorFlushThreshold, "'", "''")))
+	}
+	if limits.AllocatorBackgroundThreads {
+		boot = append(boot, "SET GLOBAL allocator_background_threads = true")
 	}
 	connector, err := duckdb.NewConnector(filepath.Join(dataDir, "hot.duckdb"), func(execer driver.ExecerContext) error {
 		for _, q := range boot {

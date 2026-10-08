@@ -66,3 +66,32 @@ func TestMemoryByTag(t *testing.T) {
 	}
 	assert.GreaterOrEqual(t, mem.Temp, int64(0))
 }
+
+func TestOpenAppliesAllocatorSettings(t *testing.T) {
+	s, err := store.Open(t.TempDir(), store.Limits{
+		MemoryLimit: "64MB", Threads: 1,
+		AllocatorFlushThreshold: "16MB", AllocatorBackgroundThreads: true,
+	})
+	require.NoError(t, err)
+	t.Cleanup(func() { _ = s.Close() })
+
+	var threshold, background string
+	err = s.DB().QueryRow(
+		"SELECT current_setting('allocator_flush_threshold'), current_setting('allocator_background_threads')::VARCHAR",
+	).Scan(&threshold, &background)
+	require.NoError(t, err)
+	assert.Equal(t, "15.2 MiB", threshold) // 16 * 10^6 bytes
+	assert.Equal(t, "true", background)
+}
+
+func TestOpenKeepsAllocatorDefaults(t *testing.T) {
+	s := openStore(t)
+
+	var threshold, background string
+	err := s.DB().QueryRow(
+		"SELECT current_setting('allocator_flush_threshold'), current_setting('allocator_background_threads')::VARCHAR",
+	).Scan(&threshold, &background)
+	require.NoError(t, err)
+	assert.Equal(t, "128.0 MiB", threshold)
+	assert.Equal(t, "false", background)
+}
