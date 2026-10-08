@@ -96,13 +96,39 @@ func Backup(ctx context.Context, lock *sync.Mutex, f *flush.Flusher, m *manifest
 func ensureEmpty(dir string) error {
 	entries, err := os.ReadDir(dir)
 	if os.IsNotExist(err) {
-		return os.MkdirAll(dir, 0o755)
+		return createDurably(dir)
 	}
 	if err != nil {
 		return fmt.Errorf("read %s: %w", dir, err)
 	}
 	if len(entries) > 0 {
 		return fmt.Errorf("backup dir %s is not empty", dir)
+	}
+	return nil
+}
+
+// createDurably creates dir and any missing ancestors, then syncs the parent
+// of each created directory so their entries survive a power loss.
+func createDurably(dir string) error {
+	dir = filepath.Clean(dir)
+	existing := dir
+	for {
+		if _, err := os.Stat(existing); err == nil {
+			break
+		}
+		parent := filepath.Dir(existing)
+		if parent == existing {
+			break
+		}
+		existing = parent
+	}
+	if err := os.MkdirAll(dir, 0o755); err != nil {
+		return fmt.Errorf("create %s: %w", dir, err)
+	}
+	for d := dir; d != existing; d = filepath.Dir(d) {
+		if err := syncDir(filepath.Dir(d)); err != nil {
+			return err
+		}
 	}
 	return nil
 }
