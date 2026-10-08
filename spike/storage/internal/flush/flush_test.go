@@ -353,3 +353,33 @@ func TestVerifyReportsMissingFile(t *testing.T) {
 	assert.Equal(t, []string{files[0].Path}, rep.Missing)
 	assert.Zero(t, rep.Signals["logs"].Cold)
 }
+
+func TestFlushWithRowGroupSizeUnsorted(t *testing.T) {
+	t.Parallel()
+	e, counts := ingest3h(t)
+	ctx := t.Context()
+	e.Flusher.RowGroupSize = 30000
+	e.Flusher.Unsorted = true
+
+	_, err := e.Flusher.FlushAll(ctx)
+	require.NoError(t, err)
+
+	rep, err := e.Flusher.Verify(ctx)
+	require.NoError(t, err)
+	assert.True(t, rep.PathsMatch)
+	for _, signal := range store.Signals {
+		assert.Equal(t, counts[signal], rep.Signals[signal].Total, signal)
+		assert.Equal(t, counts[signal], rep.Signals[signal].DistinctKeys, signal)
+	}
+
+	// An hour of small logs is 36,000 rows, so 30,000-row groups make two.
+	files, err := e.Manifest.FilesFor(ctx, "logs", h0, h1)
+	require.NoError(t, err)
+	require.Len(t, files, 1)
+	var groups int
+	err = e.Store.DB().QueryRow(
+		"SELECT count(DISTINCT row_group_id) FROM parquet_metadata(?)", filepath.Join(e.DataDir, files[0].Path),
+	).Scan(&groups)
+	require.NoError(t, err)
+	assert.Greater(t, groups, 1)
+}

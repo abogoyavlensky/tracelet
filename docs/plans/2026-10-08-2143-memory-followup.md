@@ -159,18 +159,21 @@ Go style follows `/go-style`; match the spike's existing conventions (external t
 - Modify: `spike/storage/internal/flush/flush_test.go`
 - Modify: `spike/storage/cmd/spike/main.go`
 
-- [ ] **Step 1: Failing tests**
+- [x] **Step 1: Failing tests**
   `store`: opening with `Limits{AllocatorFlushThreshold: "16MB", AllocatorBackgroundThreads: true}` makes `current_setting('allocator_flush_threshold')` contain `16.0 MiB` and `current_setting('allocator_background_threads')` equal `true`; an empty `AllocatorFlushThreshold` leaves the default. `flush`: with `RowGroupSize: 30000` the generated `COPY` statement contains `ROW_GROUP_SIZE 30000`; with `Unsorted: true` it contains no `ORDER BY`; a flush with both set still passes `Verify` and `parquet_metadata` of the file shows more than one row group for an hour of `small` logs. Expose the statement through a small unexported `copyStatement(signal, hour, cutoff, tmp string) string` function tested from an internal test file, since the SQL string is the thing under test.
 
-- [ ] **Step 2: Implement**
+- [x] **Step 2: Implement**
   `Limits` gains the two fields; `Open` appends `SET GLOBAL allocator_flush_threshold = '...'` only when non-empty and `SET GLOBAL allocator_background_threads = true` only when set. `Flusher` gains `RowGroupSize int` and `Unsorted bool`; `copyStatement` builds the options list `FORMAT parquet, COMPRESSION zstd` plus `ROW_GROUP_SIZE n` when `n > 0`, and omits `ORDER BY ts` when `Unsorted`. `commonFlags` adds `--allocator-flush-threshold` (default empty) and `--allocator-background-threads`; `runCmd` adds `--row-group-size` (default 0) and `--unsorted-flush`, and sets them on the flusher after `openSystem`.
 
-- [ ] **Step 3: Verify**
+- [x] **Step 3: Verify**
   Run: `rite spike-check`
   Expected: lint clean, all tests pass.
 
-- [ ] **Step 4: Commit**
+- [x] **Step 4: Commit**
   `git commit -m "Expose allocator, row group, and sort settings as spike flags"`
+
+> Deviation: DuckDB reads `16MB` as 16·10^6 bytes, so the test expects `allocator_flush_threshold` to be `15.2 MiB`, not `16.0 MiB`. The default it checks for is `128.0 MiB` and `false`.
+> Deviation: `copyStatement` is a `Flusher` method taking `time.Time` hour and cutoff (`f.copyStatement(signal, hour, cutoff, tmp)`) so it can read `RowGroupSize` and `Unsorted`; it is tested from `copy_internal_test.go`.
 
 ### Task 4: Summarizer and experiment script
 

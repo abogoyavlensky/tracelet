@@ -135,7 +135,16 @@ func commonFlags(fs *flag.FlagSet) (dataDir *string, limits func() store.Limits)
 	dataDir = fs.String("data-dir", ".tmp/spike", "data directory")
 	memory := fs.String("memory-limit", "256MB", "DuckDB memory_limit")
 	threads := fs.Int("threads", 2, "DuckDB threads")
-	return dataDir, func() store.Limits { return store.Limits{MemoryLimit: *memory, Threads: *threads} }
+	flushThreshold := fs.String("allocator-flush-threshold", "", "DuckDB allocator_flush_threshold; empty keeps the default")
+	backgroundThreads := fs.Bool("allocator-background-threads", false, "turn on DuckDB allocator_background_threads")
+	return dataDir, func() store.Limits {
+		return store.Limits{
+			MemoryLimit:                *memory,
+			Threads:                    *threads,
+			AllocatorFlushThreshold:    *flushThreshold,
+			AllocatorBackgroundThreads: *backgroundThreads,
+		}
+	}
 }
 
 func runCmd(ctx context.Context, args []string, stdout io.Writer) error {
@@ -152,6 +161,8 @@ func runCmd(ctx context.Context, args []string, stdout io.Writer) error {
 	seed := fs.Uint64("seed", 1, "generator seed")
 	crashAt := fs.String("crash-at", "", "exit 137 at this flush or retention step")
 	batchSeconds := fs.Int("batch-seconds", 60, "simulated seconds per commit (accelerated mode)")
+	rowGroupSize := fs.Int("row-group-size", 0, "Parquet ROW_GROUP_SIZE of flushed files; 0 keeps the default")
+	unsorted := fs.Bool("unsorted-flush", false, "flush without ORDER BY ts (diagnostic only)")
 	memInterval := fs.Duration("memory-sample-interval", time.Second, "wall-clock time between memory samples")
 	if err := fs.Parse(args); err != nil {
 		return err
@@ -174,6 +185,8 @@ func runCmd(ctx context.Context, args []string, stdout io.Writer) error {
 		return err
 	}
 	defer sys.Close()
+	sys.flusher.RowGroupSize = *rowGroupSize
+	sys.flusher.Unsorted = *unsorted
 
 	// Startup: reconcile, then retention, before any new data.
 	repaired, err := sys.flusher.Reconcile(ctx)
