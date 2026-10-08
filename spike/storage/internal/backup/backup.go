@@ -23,7 +23,8 @@ type Report struct {
 	FlushedRows int64         `json:"flushed_rows"`
 	Files       int           `json:"files"`
 	Bytes       int64         `json:"bytes"`
-	Duration    time.Duration `json:"duration"`
+	Duration    time.Duration `json:"-"`
+	DurationMS  float64       `json:"duration_ms"`
 }
 
 // Backup writes a restorable copy of dataDir into outDir, which must not
@@ -90,6 +91,7 @@ func Backup(ctx context.Context, lock *sync.Mutex, f *flush.Flusher, m *manifest
 	}
 
 	rep.Duration = time.Since(start)
+	rep.DurationMS = float64(rep.Duration.Microseconds()) / 1000
 	return rep, nil
 }
 
