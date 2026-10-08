@@ -1,0 +1,63 @@
+name: spike
+
+on:
+  push:
+    branches: [master]
+    paths: [spike/**, .github/workflows/spike.yml]
+  pull_request:
+    paths: [spike/**, .github/workflows/spike.yml]
+  workflow_dispatch:
+
+# A newer push to the same branch or PR supersedes the run in progress.
+concurrency:
+  group: spike-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+jobs:
+  storage:
+    # Pinned rather than ubuntu-latest: the binary links DuckDB's static
+    # library against the runner's glibc, so the image decides the oldest
+    # glibc a release build runs on.
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - runner: ubuntu-24.04
+            arch: amd64
+          - runner: ubuntu-24.04-arm
+            arch: arm64
+    runs-on: ${{ matrix.runner }}
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v7
+
+      # Go, golangci-lint and rite at the versions pinned in .mise.toml.
+      - uses: jdx/mise-action@v5
+
+      - uses: actions/cache@v6
+        with:
+          path: |
+            ~/.cache/go-build
+            ~/go/pkg/mod
+            ~/.cache/golangci-lint
+          key: spike-go-${{ matrix.arch }}-${{ hashFiles('spike/storage/go.sum') }}
+          restore-keys: spike-go-${{ matrix.arch }}-
+
+      # No go test -race here: CGO plus the race detector doubles the runtime
+      # for no extra storage insight.
+      - name: Lint and test
+        run: rite spike-check
+
+      - name: Build
+        run: rite spike-build
+
+      - name: Binary size and smoke test
+        run: |
+          ls -la spike/storage/bin/spike
+          spike/storage/bin/spike version
+
+      - name: One simulated hour
+        run: spike/storage/bin/spike run --profile small --days 0 --hours 1 --data-dir "$RUNNER_TEMP/spike"
