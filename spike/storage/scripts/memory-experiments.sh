@@ -50,6 +50,8 @@ rm -f "$out"/*.part
 # step <name> <data-dir> <command...>: runs the command unless <name>.json
 # exists, with stdout to <name>.json.part and stderr plus /usr/bin/time -v to
 # <name>.log; the report is renamed into place only when the command exits 0.
+# A failed step is logged and returns 1: a single-variable run that fails is
+# a result, so the matrix carries on, and the next invocation retries it.
 # A step without a report starts from an empty data dir, unless called as
 # keep=1 step ... to run on another step's data.
 step() {
@@ -66,8 +68,8 @@ step() {
     log "ok    $name"
   else
     log "FAIL  $name (exit $?, see $name.log)"
-    summarize
-    exit 1
+    failed=1
+    return 1
   fi
 }
 
@@ -75,6 +77,7 @@ summarize() {
   "$bin" summarize "$out" > "$out/summary.md" 2>> "$status" || log "FAIL  summarize"
 }
 
+failed=0
 day=("$bin" run --profile busy --days 1 --threads 2)
 
 step e0-baseline "$out/data-e0" "${day[@]}"
@@ -92,11 +95,15 @@ if [[ "$CONFIRM" == 1 ]]; then
   read -ra combo <<< "$COMBO"
   log "confirm with combo '$COMBO'"
   export GOMEMLIMIT=192MiB
-  step e6-confirm-7d "$e6_dir" "$bin" run --profile busy --days 7 --threads 2 "${combo[@]}"
-  # E7 adds to E6's data, so it must not wipe the data dir.
-  keep=1 step e7-confirm-rt "$e6_dir" "$bin" run --profile busy --real-time --minutes 5 --query-load 2 --threads 2 \
+  # E7 adds to E6's data, so it runs only after E6 and must not wipe it.
+  step e6-confirm-7d "$e6_dir" "$bin" run --profile busy --days 7 --threads 2 "${combo[@]}" &&
+    keep=1 step e7-confirm-rt "$e6_dir" "$bin" run --profile busy --real-time --minutes 5 --query-load 2 --threads 2 \
     "${combo[@]}"
 fi
 
 summarize
+if [[ "$failed" == 1 ]]; then
+  log "done with failures"
+  exit 1
+fi
 log "done"
