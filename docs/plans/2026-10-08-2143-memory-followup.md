@@ -137,15 +137,18 @@ Go style follows `/go-style`; match the spike's existing conventions (external t
 **Files:**
 - Modify: `spike/storage/internal/scenario/scenario.go`
 
-- [ ] **Step 1: Implement the sampler**
+- [x] **Step 1: Implement the sampler**
   Add a `memorySampler` type to the scenario package: `start(ctx, store, interval)` launches one goroutine with its own `*sql.Conn` that every tick builds a `MemorySample` from `ReadProcMemory`, `GoMemory`, and `MemoryByTag`, computes `Residual`, reads the current simulated time from an `atomic.Int64` the run loop updates, and appends under a mutex, tracking the sample with the highest `RSS`. `stop()` cancels, waits, and returns the samples and the peak. The sampler reads an `atomic.Bool` that `hourly` sets around `FlushDue` and records it as `InFlush`. The runner starts it at the beginning of both modes with the interval from `RunConfig.MemorySampleInterval` (CLI flag `--memory-sample-interval`, default 1 s) and stops it in `finish`, which also sets `MemoryPeakVsHWM = VmHWM / peak.RSS`. `PeakRSSBytes` from `VmHWM` stays as before so old and new reports stay comparable. The goroutine has an owner (the runner), a cancel (ctx), a wait (`stop`), and an error path (a failed sample is counted in `MemorySampleErrors` on the report, never fatal).
 
-- [ ] **Step 2: Verify by a short run**
+- [x] **Step 2: Verify by a short run**
   Run: `rite spike-build && spike/storage/bin/spike run --profile small --hours 3 --data-dir .tmp/mem-smoke > .tmp/mem-smoke.json && grep -c '"rss_bytes"' .tmp/mem-smoke.json`
   Expected: roughly one sample per wall second of the run, `memory_peak` with a `duckdb_bytes` map, and `memory_peak_vs_hwm` close to 1.
 
-- [ ] **Step 3: Commit**
+- [x] **Step 3: Commit**
   `git commit -m "Sample process, Go, and DuckDB memory during spike runs"`
+
+> Deviation: the sampler lives in its own file, `internal/scenario/memory.go`, and needs no mutex: only its goroutine touches the samples until `stop` has waited for it, and the run loop shares only the two atomics. `stop` is idempotent, so `Run` also defers it to stop the goroutine on error paths.
+> Deviation: the smoke run (4.7 s wall) got 4 samples and `memory_peak_vs_hwm` 1.25 at 1 s, since a run that short peaks between samples; the same run at `--memory-sample-interval 100ms` got 45 samples and a ratio of 1.01, which confirms the mechanism.
 
 ### Task 3: Settings as flags
 

@@ -40,6 +40,8 @@ type RunConfig struct {
 	// per-second commits would make a 7-day run take hours; commit latency is
 	// measured by the real-time run, which always commits once per second.
 	BatchSeconds int
+	// MemorySampleInterval is the wall-clock time between memory samples.
+	MemorySampleInterval time.Duration
 }
 
 // Deps is everything a run works on, built by the composition root.
@@ -124,6 +126,7 @@ type runner struct {
 	flushes  report.Latencies
 	deletes  report.Latencies
 	retained report.Latencies
+	mem      *memorySampler
 }
 
 // Run executes one run and returns its report. The caller has already
@@ -143,6 +146,11 @@ func Run(ctx context.Context, cfg RunConfig, deps Deps) (report.Report, error) {
 	r.exp = exp
 	r.gen = gen.NewGenerator(cfg.Profile, seed, exp.Rows["logs"])
 	r.rep = report.Report{Profile: cfg.Profile.Name, Rows: map[string]int64{}}
+
+	if r.mem, err = startMemorySampler(ctx, deps.Store, cfg.MemorySampleInterval); err != nil {
+		return r.rep, err
+	}
+	defer r.mem.stop()
 
 	if cfg.RealTime {
 		err = r.realTime(ctx)
@@ -206,6 +214,7 @@ func (r *runner) accelerated(ctx context.Context) error {
 
 // generate adds one second to the pending batch.
 func (r *runner) generate(now time.Time) {
+	r.mem.simTime.Store(now.UnixNano())
 	b := r.gen.Next(now)
 	r.exp.SimulatedEnd = now.Add(time.Second)
 	r.pending.Logs = append(r.pending.Logs, b.Logs...)
@@ -315,7 +324,9 @@ func (r *runner) hourly(ctx context.Context, now time.Time) error {
 	}
 
 	r.deps.Lock.Lock()
+	r.mem.inFlush.Store(true)
 	stats, err := r.deps.Flusher.FlushDue(ctx, now)
+	r.mem.inFlush.Store(false)
 	if err == nil {
 		retStart := time.Now()
 		var ret flush.RetentionReport
@@ -387,8 +398,12 @@ func (r *runner) finish(ctx context.Context) error {
 	if r.rep.DirBytes, err = flush.DirBytes(r.deps.DataDir); err != nil {
 		return err
 	}
+	r.rep.MemorySamples, r.rep.MemoryPeak, r.rep.MemorySampleErrors = r.mem.stop()
 	if r.rep.PeakRSSBytes, err = report.PeakRSS(); err != nil {
 		return err
+	}
+	if r.rep.MemoryPeak != nil {
+		r.rep.MemoryPeakVsHWM = float64(r.rep.PeakRSSBytes) / float64(r.rep.MemoryPeak.RSS)
 	}
 	return nil
 }

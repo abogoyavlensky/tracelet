@@ -152,6 +152,7 @@ func runCmd(ctx context.Context, args []string, stdout io.Writer) error {
 	seed := fs.Uint64("seed", 1, "generator seed")
 	crashAt := fs.String("crash-at", "", "exit 137 at this flush or retention step")
 	batchSeconds := fs.Int("batch-seconds", 60, "simulated seconds per commit (accelerated mode)")
+	memInterval := fs.Duration("memory-sample-interval", time.Second, "wall-clock time between memory samples")
 	if err := fs.Parse(args); err != nil {
 		return err
 	}
@@ -204,7 +205,8 @@ func runCmd(ctx context.Context, args []string, stdout io.Writer) error {
 		QueryLoad: *queryLoad,
 		Seed:      *seed,
 
-		BatchSeconds: *batchSeconds,
+		BatchSeconds:         *batchSeconds,
+		MemorySampleInterval: *memInterval,
 	}, scenario.Deps{
 		Store:    sys.store,
 		Writer:   sys.writer,
