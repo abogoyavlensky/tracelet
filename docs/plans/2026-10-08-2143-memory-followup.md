@@ -208,20 +208,25 @@ Go style follows `/go-style`; match the spike's existing conventions (external t
 **Files:**
 - Create: `docs/spikes/memory.md` (draft)
 
-- [ ] **Step 1: Run the matrix**
+- [x] **Step 1: Run the matrix**
   `setsid nohup spike/storage/scripts/memory-experiments.sh > /dev/null 2>&1 < /dev/null &` then follow `.tmp/memory/status.log`. About one hour.
 
-- [ ] **Step 2: Attribute**
+- [x] **Step 2: Attribute**
   First check `memory_peak_vs_hwm`; above 1.1, re-run E0 with `--memory-sample-interval 100ms` as the design says. Then from E0's `memory_peak`: write down RSS, the Go resident estimate, DuckDB by tag, residual, and `in_flush`. From the time series: whether RSS between flushes sits near the peak (plateau) or well below it (transient), and whether the highest samples are flush samples.
 
-- [ ] **Step 3: Compare**
+- [x] **Step 3: Compare**
   From `summary.md`: the peak RSS of each of E1 to E5 against E0, and the flush p95 and commit p99 to catch regressions.
 
-- [ ] **Step 4: Choose the combination**
+- [x] **Step 4: Choose the combination**
   Pick every single-variable change that cut peak RSS by at least 50 MB without a regression over 20%. E5 never joins the combination; it only explains the sort's share. Record the choice and the reasoning in the draft note.
 
-- [ ] **Step 5: Commit the draft**
+- [x] **Step 5: Commit the draft**
   `git commit -m "Record memory attribution and single-variable results"`
+
+> Deviation: E3 first failed on a bug that was already in `store.Open`. It re-ran `SET GLOBAL temp_directory` on every new pooled connection, which DuckDB rejects once the temp directory has been used. The fix is commit `e3f0f31`: the temp directory is set once, in the DSN, with a regression test. Memory and latency are unaffected, so E0 to E2 were not re-run.
+> Deviation: with the fix, E3 (`memory_limit = 128MB`) fails as a result: the first flush's sorted `COPY` runs out of memory. The script now logs a failed single-variable step and carries on (`fd5cdf2`), so E4 and E5 ran. E3 is recorded as failed and excluded from the combination.
+> Deviation: E0's ratio was 1.00, so the 100 ms re-run was not needed. E2's ratio was 1.12, so its peak breakdown is recorded as unknown; its `VmHWM` stands.
+> Result: the combination is `--allocator-background-threads` alone.
 
 ### Task 6: Confirmation runs
 
