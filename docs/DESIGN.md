@@ -1,6 +1,6 @@
 # Tracelet design
 
-Status: initial technical design, 7 October 2026. This document records the chosen implementation direction for the vision in [VISION.md](VISION.md). Decisions marked **decided** are the plan unless phase 0 measurements contradict them. Everything else is a candidate. Nothing here has been built or benchmarked.
+Status: initial technical design, 7 October 2026. This document records the chosen implementation direction for the vision in [VISION.md](VISION.md). Decisions marked **decided** are the plan unless phase 0 measurements contradict them. Everything else is a candidate. Phase 0 measured the storage layout on 8 October 2026; see [the storage spike results](spikes/storage.md). Nothing else here has been built or benchmarked.
 
 ## Architecture
 
@@ -53,19 +53,30 @@ Every record keeps the event time and the ingest time. Delayed mobile telemetry 
 
 **Hot/cold split (decided).** A native DuckDB file under continuous small commits plus rolling deletes is the riskiest assumption in the original plan. Deleted rows reclaim space poorly, the file never shrinks, and schema changes are constrained. Instead:
 
-- **Hot:** native DuckDB tables hold the current and previous hour of each signal. All writes go here.
+- **Hot:** native DuckDB tables hold the current and previous hour of each signal. All writes go here. Measured at the `busy` workload, the hot file stays flat at about 90 MB.
 - **Cold:** a flush job exports completed hours to Parquet under `data/telemetry/<signal>/date=YYYY-MM-DD/hour=HH/<ulid>.parquet`, sorted by timestamp within the file. Multiple files per hour are allowed; late data for an already flushed hour produces another file.
-- **Queries** run against one DuckDB view per signal that unions the hot table with a Parquet glob read using hive partitioning and union by name. The query compiler always adds date and hour predicates derived from the requested time range so partition pruning applies.
+- **Queries (decided, phase 0).** Each query unions the hot table with `read_parquet([...], union_by_name = true)` over the exact files the manifest lists for the requested time range, using each file's real time range so late-data files are found. This replaces the earlier plan of a view over a hive-partitioned glob: the manifest gives exact pruning, never breaks on an empty match, and is the single source of truth for which files exist. The hive-style directory names stay for human legibility.
 
-Flush order is: write to a temporary name, fsync, rename into place, record the file in the SQLite manifest, then delete the rows from the hot table. A crash between rename and delete leaves rows in both places. On startup, reconciliation deletes hot rows for any hour that already has manifest entries covering it and removes manifest entries whose files are missing. The manifest stores signal, hour, row count, time range, bytes, and schema version per file, and powers storage visibility.
+**Flush by ingest cutoff (decided, phase 0).** The single writer stamps every batch with an `ingest_ts` strictly greater than the previous batch's. A flush of one hour captures `cutoff = max(ingest_ts)` for that hour and exports the rows at or below it, both in one DuckDB snapshot. It writes to a temporary name, fsyncs the file and its directories, renames it into place, and records the file in the SQLite manifest with `max_ingest_ts = cutoff`. Only then does it delete exactly `ts in hour AND ingest_ts <= cutoff` from the hot table. Rows that arrive for the hour after the cutoff stay hot and flush into another file later, so ingestion never pauses.
 
-**Retention** is per signal in days and deletes whole partitions, so reclaiming disk is a file removal. A configurable total telemetry size acts as a ring buffer: when exceeded, the oldest partitions go first and the health page records it. A free-disk floor rejects ingestion with a retryable error rather than filling the disk.
+On startup, reconciliation does four things:
 
-**Backup** is `tracelet backup`: force a flush, snapshot SQLite with `VACUUM INTO`, and archive the data directory. Parquet files are immutable so a plain copy is consistent. Copying a live SQLite or DuckDB file is documented as unsupported.
+1. Removes temporary files.
+2. Adopts final-named files missing from the manifest, reading the row count, time range, and cutoff from the file itself.
+3. Drops manifest entries whose files are missing.
+4. Deletes hot rows at or below each recorded hour's greatest cutoff.
+
+Retention runs after reconciliation. Phase 0 killed the process after every flush step and lost and duplicated nothing. The manifest stores signal, hour, row count, time range, ingest cutoff, bytes, and schema version per file, and powers storage visibility.
+
+Between the manifest insert and the hot delete, a query can see an hour's rows twice. The window is one `DELETE`, measured at 6.5 ms p50 and up to 1 s. A query that reads the manifest before a flush records a file and scans hot after the delete misses the hour instead. Both windows close with one query protocol (see open decisions).
+
+**Retention** is per signal in days and deletes whole partitions, so reclaiming disk is a file removal. Each file is unlinked and its directory fsynced before its manifest row is removed, so an interrupted deletion completes on the next start and nothing is resurrected. Phase 0 held filesystem usage flat at 1.43 GB under a 3-day limit for 7 simulated days, with a retention pass costing about 15 ms. A configurable total telemetry size acts as a ring buffer: when exceeded, the oldest partitions go first and the health page records it. A free-disk floor rejects ingestion with a retryable error rather than filling the disk.
+
+**Backup** is `tracelet backup`: under the maintenance lock that also serialises flush and retention, force a flush, snapshot the manifest with `VACUUM INTO`, and copy exactly the files that snapshot lists. Parquet files are immutable so a plain copy is consistent, and restoring is opening a data directory on the copy. Phase 0 backed up 7 days of `busy` data (2.98 GB) in under 10 s. Copying a live SQLite or DuckDB file is documented as unsupported.
 
 **Schema evolution.** New columns are nullable. The hot table changes with `ALTER TABLE ADD COLUMN`; old Parquet files are read with union by name. The manifest records the schema version so migrations can rewrite old partitions if ever required.
 
-**Trace lookup by ID.** Trace IDs are random so min/max statistics do not prune. The initial approach is a time-bounded scan reading only the trace ID column, defaulting to the last seven days and extendable by the caller. Trace lists and log links always carry timestamps, so most lookups are already bounded. Phase 0 measures this; the fallback is a small per-partition trace index file listing trace ID and time range.
+**Trace lookup by ID.** Trace IDs are random so min/max statistics do not prune. The initial approach is a time-bounded scan reading only the trace ID column, defaulting to the last seven days and extendable by the caller. Trace lists and log links always carry timestamps, so most lookups are already bounded. Phase 0 measured an unbounded 7-day lookup at the `busy` workload at 0.94 s p50 and 1.03 s p95, and 1.8 s p95 under concurrent query load. That misses the 1 s target, so the fallback is needed: a small per-partition trace index file listing trace ID and time range, written at flush (see open decisions).
 
 **Rollups** for long retention are a later addition computed from cold partitions into separate rollup files. They are not needed until retention exceeds what raw scans handle inside the memory budget.
 
@@ -186,7 +197,14 @@ Provisional target: 1 to 4 seconds from server receipt to UI visibility under th
 
 Dashboards refresh every 2 to 5 seconds while visible. A coalesced server-sent event after each commit invalidates affected queries rather than refreshing everything. Live logs read from a cursor.
 
-Resource budget: comfortable operation in 1 GB RAM on a small VPS. This is a design objective, not a supported minimum. DuckDB gets an explicit memory limit, defaulting to 256 MB, two threads, and a temp directory inside the data directory. Query concurrency and deadlines are bounded. Whole-process RSS is what gets measured; Go heap limits do not cap DuckDB. Workload definitions for ingest rate, payload size, cardinality, retention, and concurrent queries are set in phase 0 before any performance claim is published.
+Resource budget: comfortable operation in 1 GB RAM on a small VPS. This is a design objective, not a supported minimum. DuckDB gets an explicit memory limit, defaulting to 256 MB, two threads, and a temp directory inside the data directory. Query concurrency and deadlines are bounded. Whole-process RSS is what gets measured; Go heap limits do not cap DuckDB.
+
+**Phase 0 did not meet the budget.** Peak RSS was 997 MB and 1,001 MB over 7 simulated days, and 852 MB in real-time ingestion with two concurrent query loops. Capping the Go heap saved only about 50 MB: the excess is native DuckDB memory outside its buffer-managed `memory_limit`, and it plateaus within the first day. Until a follow-up brings this down, no 1 GB claim is published (see open decisions).
+
+**Normal workload (phase 0).** The `busy` profile is 100 logs/s, 50 spans/s, and 50 metric points/s from 10 services in 2 environments over 500 metric series, with 1% of logs up to 3 hours late. That is 17.3 million rows and about 423 MB of Parquet per day. Measured at this workload:
+
+- commit latency: 15 ms p50 and 46 ms p99 for one-second batches; every commit costs a WAL sync of about 5 ms, and batches of 12,000 rows occasionally stall for seconds;
+- investigation queries over 1 hour to 7 days: 2.1 s p99 or less under ingestion.
 
 ## Operation and reliability
 
@@ -213,13 +231,13 @@ A single instance cannot alert on its own host failing. An external heartbeat mo
 | Tool versions | mise |
 | Task management | abogoyavlensky/rite |
 
-Built frontend assets are embedded in the server executable; production needs no Node.js. DuckDB brings CGO and prebuilt native libraries, so release packaging is validated in phase 0. The executable will be tens of megabytes and is not universally static.
+Built frontend assets are embedded in the server executable; production needs no Node.js. DuckDB brings CGO and prebuilt native libraries. Phase 0 built and tested them with the bundled static libraries on both Linux architectures: unstripped binaries of 80 MB (amd64) and 73 MB (arm64). The executable is not universally static. CI and release builds pin `ubuntu-24.04` and `ubuntu-24.04-arm` rather than `ubuntu-latest`, because the runner's glibc sets the oldest glibc the binary runs on.
 
 **Platforms (decided).** The combined server and CLI executable ships for Linux amd64 and arm64, plus a Docker image. A CLI-only executable without DuckDB ships for macOS, Linux, and Windows. Additional server platforms are added on demand.
 
 ## Delivery sequence and validation
 
-Phase 0 is a throwaway spike, not product code: a load generator producing realistic logs, spans, and metrics at configurable rates and cardinality, driving a minimal ingestion path into the hot/cold layout for several simulated days. It must demonstrate, inside the 1 GB budget:
+Phase 0 is done; its results are in [spikes/storage.md](spikes/storage.md). It was a throwaway spike, not product code: a load generator producing realistic logs, spans, and metrics at configurable rates and cardinality, driving a minimal ingestion path into the hot/cold layout for several simulated days. It must demonstrate, inside the 1 GB budget:
 
 - flush and reconciliation under process termination at every step;
 - retention and ring-buffer deletion reclaiming disk under sustained ingestion;
@@ -233,9 +251,12 @@ Phases 1 to 4 follow the vision. Each feature ships with API and CLI access. Sco
 
 ## Open decisions
 
-- Workload definition and measured limits from phase 0.
-- Whether a per-partition trace index is needed.
-- Hot window length and flush trigger thresholds.
+- Memory: bring whole-process RSS at the `busy` workload from about 1.0 GB to about 700 MB, or change the published budget. First measure DuckDB's allocator settings, a 128 MB `memory_limit`, and smaller flush row groups, each on its own.
+- Trace index: phase 0 showed it is needed (7-day lookup p95 1.03 s alone, 1.8 s under load). Open questions are its format and whether it is written at flush or compaction.
+- Query and flush consistency: a query overlapping a flush can see an hour twice or miss it. Pick either a read side of the maintenance lock or filtering hot rows by recorded cutoffs against a pinned snapshot.
+- Late-data compaction: 1% late logs triples the log file count; decide when an hour is closed and its small late files are merged.
+- Writer batch bounds: commit cost is a WAL sync of about 5 ms plus occasional multi-second stalls for large batches; set the batch time and size caps.
+- Duplicate handling on ingest, out of scope for phase 0, needs its own design against the measured Appender throughput.
 - Non time-series chart components after the UI prototype.
 - Exact attribute redaction rule format.
 
@@ -248,6 +269,9 @@ Phases 1 to 4 follow the vision. Each feature ships with API and CLI access. Sco
 | Application state | SQLite | Transactional, well understood, single file |
 | Job queue | In-process scheduler over SQLite table | Small needs; River's SQLite driver is experimental and the library targets multi-node Postgres |
 | Telemetry inbox in SQLite | Rejected | Direct DuckDB writes with ack after commit are sufficient; revisit only on measured need |
+| Cold file resolution | Manifest-resolved file lists, not a glob view | Exact pruning, no empty-glob failures, one source of truth; measured in phase 0 |
+| Flush rule | Per-hour ingest cutoff | Exports and deletes exactly the same rows without pausing ingestion; survived a process kill at every step in phase 0 |
+| Hot window | Current and previous hour, hourly flush | Hot file flat at about 90 MB; flush at most about 2 s per signal and hour at `busy` |
 | MCP | Not planned | OpenAPI plus a JSON CLI is sufficient for agents and more stable |
 | Charts | uPlot | Small, fast, proven for time series in Grafana |
 | Error grouping | Phase 2 | Most common first question; cheap once logs and spans exist |
