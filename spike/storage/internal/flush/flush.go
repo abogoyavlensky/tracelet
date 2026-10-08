@@ -32,7 +32,9 @@ const (
 // current and the previous hour stay hot.
 const HotWindow = 2 * time.Hour
 
-// Flusher moves hot rows into Parquet files.
+// Flusher moves hot rows into Parquet files. Its methods do not lock: the
+// composition root owns one maintenance mutex and holds it around each flush,
+// retention, reconcile, or backup run so they never overlap.
 type Flusher struct {
 	Store    *store.Store
 	Manifest *manifest.Manifest
