@@ -222,6 +222,10 @@ func (r *runner) writePending(ctx context.Context) error {
 	return err
 }
 
+// maxCatchUpBatch caps the seconds one real-time commit carries while
+// catching up after dropped ticks.
+const maxCatchUpBatch = 60
+
 func (r *runner) realTime(ctx context.Context) error {
 	r.rep.Mode = "real-time"
 	if r.cfg.Minutes <= 0 {
@@ -268,7 +272,12 @@ loop:
 			generated := 0
 			for ; !next.After(now); next = next.Add(time.Second) {
 				r.generate(next)
-				generated++
+				// Commit a long backlog in bounded chunks.
+				if generated++; generated%maxCatchUpBatch == 0 {
+					if loopErr = r.writePending(ctx); loopErr != nil {
+						break loop
+					}
+				}
 			}
 			r.rep.CatchUpSeconds += max(generated-1, 0)
 			if loopErr = r.writePending(ctx); loopErr != nil {
