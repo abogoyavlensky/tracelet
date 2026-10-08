@@ -57,6 +57,9 @@ type Deps struct {
 type Expected struct {
 	Rows map[string]int64 `json:"rows"`
 	Runs int              `json:"runs"`
+	// SimulatedEnd is just after the last generated second. A later run must
+	// start at or after it, or it would generate metric keys that exist.
+	SimulatedEnd time.Time `json:"simulated_end,omitzero"`
 }
 
 // ReadExpected reads ExpectedFile from path. A missing file is an empty,
@@ -133,11 +136,9 @@ func Run(ctx context.Context, cfg RunConfig, deps Deps) (report.Report, error) {
 	if err != nil {
 		return r.rep, err
 	}
-	seed := cfg.Seed
-	if exp.Runs > 0 {
-		// Continue: fresh IDs from a new stream, seq after the logs so far.
-		seed = cfg.Seed + 1
-	}
+	// Every run on a data dir gets its own random stream, so trace and span
+	// IDs never repeat; seq continues after the logs so far.
+	seed := cfg.Seed + uint64(exp.Runs)
 	exp.Runs++
 	r.exp = exp
 	r.gen = gen.NewGenerator(cfg.Profile, seed, exp.Rows["logs"])
@@ -167,6 +168,10 @@ func (r *runner) accelerated(ctx context.Context) error {
 	}
 	start := time.Now().UTC().Truncate(time.Hour).Add(-total)
 	end := start.Add(total)
+	if start.Before(r.exp.SimulatedEnd) {
+		return fmt.Errorf("run would start at %s, before the previous run's end %s; use a fresh data dir",
+			start.Format(time.RFC3339), r.exp.SimulatedEnd.Format(time.RFC3339))
+	}
 	r.rep.SimulatedStart, r.rep.SimulatedEnd = start, end
 	r.rep.SimulatedHours = total.Hours()
 
@@ -199,9 +204,10 @@ func (r *runner) accelerated(ctx context.Context) error {
 	return r.hourly(ctx, end)
 }
 
-// generate adds one simulated second to the pending batch.
+// generate adds one second to the pending batch.
 func (r *runner) generate(now time.Time) {
 	b := r.gen.Next(now)
+	r.exp.SimulatedEnd = now.Add(time.Second)
 	r.pending.Logs = append(r.pending.Logs, b.Logs...)
 	r.pending.Spans = append(r.pending.Spans, b.Spans...)
 	r.pending.Points = append(r.pending.Points, b.Points...)
@@ -234,6 +240,14 @@ func (r *runner) realTime(ctx context.Context) error {
 		return err
 	}
 
+	// The next second to generate. A slow commit or flush makes the ticker
+	// drop ticks; the next tick then generates every second missed, so the
+	// offered load stays at the profile's rate and the lag is reported.
+	next := start.Add(time.Second) // the first tick lands a second after start
+	if next.Before(r.exp.SimulatedEnd) {
+		next = r.exp.SimulatedEnd
+	}
+
 	ticker := time.NewTicker(time.Second)
 	defer ticker.Stop()
 	lastHour := start.Truncate(time.Hour)
@@ -251,7 +265,13 @@ loop:
 					break loop
 				}
 			}
-			if loopErr = r.write(ctx, now); loopErr != nil {
+			generated := 0
+			for ; !next.After(now); next = next.Add(time.Second) {
+				r.generate(next)
+				generated++
+			}
+			r.rep.CatchUpSeconds += max(generated-1, 0)
+			if loopErr = r.writePending(ctx); loopErr != nil {
 				break loop
 			}
 		}
@@ -262,11 +282,6 @@ loop:
 		return loopErr
 	}
 	return r.hourly(ctx, time.Now().UTC())
-}
-
-// write generates and commits one second (real-time mode).
-func (r *runner) write(ctx context.Context, now time.Time) error {
-	return r.commit(ctx, r.gen.Next(now))
 }
 
 func (r *runner) commit(ctx context.Context, b telemetry.Batch) error {
