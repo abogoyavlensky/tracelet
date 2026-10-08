@@ -3,6 +3,7 @@ package main
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"flag"
 	"fmt"
@@ -10,6 +11,8 @@ import (
 	"os"
 	"os/signal"
 	"path/filepath"
+	"slices"
+	"strings"
 	"sync"
 	"syscall"
 	"time"
@@ -35,6 +38,7 @@ Commands:
   verify      Check a data dir against its expected row counts
   lookup      Time trace lookups by ID over the full window
   backup      Back up a data dir
+  summarize   Print a markdown table of the run reports in a directory
   version     Print the version
 
 Run "spike <command> -h" for the command's flags.
@@ -72,6 +76,8 @@ func run(args []string, stdout io.Writer) error {
 		err = lookupCmd(ctx, args[1:], stdout)
 	case "backup":
 		err = backupCmd(ctx, args[1:], stdout)
+	case "summarize":
+		err = summarizeCmd(args[1:], stdout, os.Stderr)
 	case "version":
 		fmt.Fprintln(stdout, version)
 	case "help", "-h", "--help":
@@ -383,4 +389,40 @@ func backupCmd(ctx context.Context, args []string, stdout io.Writer) error {
 		return err
 	}
 	return report.WriteJSON(stdout, rep)
+}
+
+func summarizeCmd(args []string, stdout, stderr io.Writer) error {
+	fs := flag.NewFlagSet("summarize", flag.ContinueOnError)
+	fs.Usage = func() { fmt.Fprintln(fs.Output(), "Usage: spike summarize <dir>") }
+	if err := fs.Parse(args); err != nil {
+		return err
+	}
+	if fs.NArg() != 1 {
+		fs.Usage()
+		return errors.New("summarize needs exactly one directory")
+	}
+	dir := fs.Arg(0)
+
+	paths, err := filepath.Glob(filepath.Join(dir, "*.json"))
+	if err != nil {
+		return fmt.Errorf("list reports: %w", err)
+	}
+	slices.Sort(paths)
+	var named []report.NamedReport
+	for _, path := range paths {
+		var rep report.Report
+		b, err := os.ReadFile(path)
+		if err != nil {
+			return fmt.Errorf("read report: %w", err)
+		}
+		// Lookup and backup outputs decode too, minus the fields only a run
+		// report has, so a run report is one with a mode.
+		if err := json.Unmarshal(b, &rep); err != nil || rep.Mode == "" {
+			fmt.Fprintf(stderr, "skipping %s: not a run report\n", filepath.Base(path))
+			continue
+		}
+		named = append(named, report.NamedReport{Name: strings.TrimSuffix(filepath.Base(path), ".json"), Report: rep})
+	}
+	_, err = io.WriteString(stdout, report.Summarize(named))
+	return err
 }
