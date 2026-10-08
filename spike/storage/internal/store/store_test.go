@@ -1,6 +1,7 @@
 package store_test
 
 import (
+	"path/filepath"
 	"testing"
 	"time"
 
@@ -94,4 +95,28 @@ func TestOpenKeepsAllocatorDefaults(t *testing.T) {
 	require.NoError(t, err)
 	assert.Equal(t, "128.0 MiB", threshold)
 	assert.Equal(t, "false", background)
+}
+
+func TestNewConnectionAfterSpill(t *testing.T) {
+	dir := t.TempDir()
+	s, err := store.Open(dir, store.Limits{MemoryLimit: "32MB", Threads: 1})
+	require.NoError(t, err)
+	t.Cleanup(func() { _ = s.Close() })
+	ctx := t.Context()
+
+	// A sort larger than the memory limit spills to the temp directory.
+	held, err := s.Conn(ctx)
+	require.NoError(t, err)
+	defer held.Close()
+	_, err = held.ExecContext(ctx,
+		"CREATE TABLE big AS SELECT i, md5(i::VARCHAR) AS s FROM range(3000000) t(i) ORDER BY s")
+	require.NoError(t, err)
+
+	// A connection opened after the temp directory was used must still boot.
+	fresh, err := s.Conn(ctx)
+	require.NoError(t, err)
+	defer fresh.Close()
+	var tmp string
+	require.NoError(t, fresh.QueryRowContext(ctx, "SELECT current_setting('temp_directory')").Scan(&tmp))
+	assert.Equal(t, filepath.Join(dir, "tmp"), tmp)
 }
