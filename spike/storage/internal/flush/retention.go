@@ -106,6 +106,11 @@ func (f *Flusher) removeFiles(ctx context.Context, files []manifest.File, rep *R
 		if err := os.Remove(path); err != nil && !os.IsNotExist(err) {
 			return fmt.Errorf("remove %s: %w", file.Path, err)
 		}
+		// Make the unlink durable before the row goes; otherwise a power loss
+		// could bring the file back without its row and Reconcile would adopt it.
+		if err := syncDir(filepath.Dir(path)); err != nil {
+			return err
+		}
 		if err := f.hook(StepRetentionRemoved); err != nil {
 			return fmt.Errorf("retention %s: %w", file.Path, err)
 		}
