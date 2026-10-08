@@ -2,14 +2,10 @@
 package report
 
 import (
-	"bufio"
 	"encoding/json"
 	"fmt"
 	"io"
-	"os"
 	"slices"
-	"strconv"
-	"strings"
 	"time"
 )
 
@@ -98,6 +94,11 @@ type Report struct {
 	Samples         []Sample           `json:"samples,omitempty"`
 	StartupRepairs  any                `json:"startup_reconcile,omitempty"`
 	StartupRetained any                `json:"startup_retention,omitempty"`
+
+	MemorySamples      []MemorySample `json:"memory_samples,omitempty"`
+	MemoryPeak         *MemorySample  `json:"memory_peak,omitempty"`          // the sample with the highest RSS
+	MemoryPeakVsHWM    float64        `json:"memory_peak_vs_hwm,omitempty"`   // PeakRSSBytes / MemoryPeak.RSS
+	MemorySampleErrors int            `json:"memory_sample_errors,omitempty"` // samples that failed and were skipped
 }
 
 // WriteJSON writes v as indented JSON.
@@ -112,29 +113,3 @@ func WriteJSON(w io.Writer, v any) error {
 
 // WriteJSON writes the report as indented JSON.
 func (r Report) WriteJSON(w io.Writer) error { return WriteJSON(w, r) }
-
-// PeakRSS returns the process's peak resident set size (VmHWM) in bytes.
-func PeakRSS() (int64, error) {
-	f, err := os.Open("/proc/self/status")
-	if err != nil {
-		return 0, fmt.Errorf("open status: %w", err)
-	}
-	defer f.Close()
-
-	s := bufio.NewScanner(f)
-	for s.Scan() {
-		rest, ok := strings.CutPrefix(s.Text(), "VmHWM:")
-		if !ok {
-			continue
-		}
-		kb, err := strconv.ParseInt(strings.TrimSuffix(strings.TrimSpace(rest), " kB"), 10, 64)
-		if err != nil {
-			return 0, fmt.Errorf("parse VmHWM %q: %w", rest, err)
-		}
-		return kb * 1024, nil
-	}
-	if err := s.Err(); err != nil {
-		return 0, fmt.Errorf("read status: %w", err)
-	}
-	return 0, fmt.Errorf("VmHWM not found")
-}
