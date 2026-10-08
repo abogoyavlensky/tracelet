@@ -148,3 +148,41 @@ func (s *Store) Close() error {
 	}
 	return connErr
 }
+
+// Memory is DuckDB's own accounting of its memory, from duckdb_memory().
+type Memory struct {
+	ByTag map[string]int64 // memory_usage_bytes by tag, non-zero tags only
+	Temp  int64            // temporary_storage_bytes over all tags
+}
+
+// queryer is satisfied by *sql.DB and *sql.Conn.
+type queryer interface {
+	QueryContext(ctx context.Context, query string, args ...any) (*sql.Rows, error)
+}
+
+// MemoryByTag reads duckdb_memory() through q, which may be a dedicated
+// connection so a sampler does not compete with the pool.
+func MemoryByTag(ctx context.Context, q queryer) (Memory, error) {
+	rows, err := q.QueryContext(ctx, "SELECT tag, memory_usage_bytes, temporary_storage_bytes FROM duckdb_memory()")
+	if err != nil {
+		return Memory{}, fmt.Errorf("duckdb memory: %w", err)
+	}
+	defer rows.Close()
+
+	mem := Memory{ByTag: map[string]int64{}}
+	for rows.Next() {
+		var tag string
+		var used, temp int64
+		if err := rows.Scan(&tag, &used, &temp); err != nil {
+			return Memory{}, fmt.Errorf("scan duckdb memory: %w", err)
+		}
+		if used > 0 {
+			mem.ByTag[tag] = used
+		}
+		mem.Temp += temp
+	}
+	if err := rows.Err(); err != nil {
+		return Memory{}, fmt.Errorf("read duckdb memory: %w", err)
+	}
+	return mem, nil
+}

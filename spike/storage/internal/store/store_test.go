@@ -2,6 +2,7 @@ package store_test
 
 import (
 	"testing"
+	"time"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -45,4 +46,23 @@ func TestOpenCreatesHotTables(t *testing.T) {
 	require.NoError(t, rows.Err())
 
 	assert.Equal(t, []string{"logs", "metric_points", "spans"}, tables)
+}
+
+func TestMemoryByTag(t *testing.T) {
+	s := openStore(t)
+	w, err := store.NewWriter(t.Context(), s)
+	require.NoError(t, err)
+	t.Cleanup(func() { _ = w.Close() })
+	_, err = w.Write(t.Context(), sampleBatch(time.Date(2026, 1, 2, 3, 4, 5, 0, time.UTC)))
+	require.NoError(t, err)
+
+	mem, err := store.MemoryByTag(t.Context(), s.DB())
+	require.NoError(t, err)
+	// Freshly committed rows show up under IN_MEMORY_TABLE, not BASE_TABLE,
+	// so only check that some tag is accounted.
+	assert.NotEmpty(t, mem.ByTag)
+	for tag, n := range mem.ByTag {
+		assert.Positive(t, n, tag)
+	}
+	assert.GreaterOrEqual(t, mem.Temp, int64(0))
 }
