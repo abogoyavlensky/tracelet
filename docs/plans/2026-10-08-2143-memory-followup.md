@@ -183,21 +183,25 @@ Go style follows `/go-style`; match the spike's existing conventions (external t
 - Modify: `spike/storage/cmd/spike/main.go`
 - Create: `spike/storage/scripts/memory-experiments.sh`
 
-- [ ] **Step 1: Failing test**
+- [x] **Step 1: Failing test**
   `Summarize(named []NamedReport) string` on two hand-built reports returns a markdown table with one row per report and the columns: name, peak RSS (MB, from `PeakRSSBytes`), RSS at peak sample, Go resident estimate at peak, DuckDB total at peak, residual at peak, whether the peak sample was in a flush, the HWM ratio, flush p95 (ms), commit p99 (ms), worst query p99 (ms, blank when no queries). Numbers are rounded to whole MB and ms. The same column names are used in the results note.
 
-- [ ] **Step 2: Implement**
+- [x] **Step 2: Implement**
   `summarize` subcommand: `spike summarize <dir>` reads every `*.json` in the directory that decodes as a `Report`, orders them by file name, and prints the table. Files that are not reports (the `lookup` and `backup` outputs) are skipped with a note on stderr.
 
-- [ ] **Step 3: Script**
+- [x] **Step 3: Script**
   `scripts/memory-experiments.sh` follows `experiments.sh` in shape: detached-friendly, `.tmp/memory/` output dir, `status.log`, `/usr/bin/time -v` around every run, one fresh data dir per run. Unlike `experiments.sh` it never deletes the whole output dir. Each step writes to `<name>.json.part` and renames it to `<name>.json` only after the command exits 0, so an existing `<name>.json` always means a completed run. On start the script deletes every `*.part` and the data dir of each step that has no `<name>.json`, then runs only the steps whose report is missing. `FRESH=1` removes the output dir first. It runs E0 to E5 as one-day `busy` runs with the flags from the design table. Confirmation is switched on with `CONFIRM=1`, and `COMBO` holds the extra flags, which may be empty for the baseline settings (for example `CONFIRM=1 COMBO="--allocator-flush-threshold 16MB --row-group-size 30000"` or `CONFIRM=1 COMBO=""`). With `CONFIRM=1` it runs E6 (seven days) and E7 (real time, 5 minutes, `--query-load 2`, on E6's data dir) with those flags and `GOMEMLIMIT=192MiB`; a re-run with a different `COMBO` deletes only the E6 and E7 reports and data dir first. Without `CONFIRM` it stops after E5. Every invocation ends by writing `summary.md` from `spike summarize`.
 
-- [ ] **Step 4: Verify**
+- [x] **Step 4: Verify**
   Run: `rite spike-check`, then `spike/storage/bin/spike summarize .tmp/experiments` against the previous spike's reports.
   Expected: a table with `full-7d`, `retained-7d`, and `full-rt` rows, with blank memory-at-peak columns since those reports predate sampling, and a stderr note for `lookup.json` and `backup.json`.
 
-- [ ] **Step 5: Commit**
+- [x] **Step 5: Commit**
   `git commit -m "Add memory experiment script and report summarizer"`
+
+> Deviation: the script gained `FINE=1`, which runs `e0-baseline-100ms` (E0 at `--memory-sample-interval 100ms`), so Task 5's re-run goes through the same resumable path. It stores the confirmation `COMBO` in `combo.txt` to detect a change. An E7 that started and did not finish also re-runs E6, because E7 writes into E6's data dir. Data dirs are wiped when their step starts, not all up front. Resume, failure, and combo change were checked against a stub binary.
+> Deviation: summary memory columns are decimal MB (10^6 bytes), matching the storage note's 997 MB. A JSON file counts as a run report when it decodes and has a `mode`.
+> Note: the script calls `go`, so launch it with the repo's tools on PATH, e.g. `mise x -- setsid nohup ...`.
 
 ### Task 5: Run E0 to E5 and attribute the peak
 
