@@ -230,14 +230,17 @@ Go style follows `/go-style`; match the spike's existing conventions (external t
 
 ### Task 6: Confirmation runs
 
-- [ ] **Step 1: Run E6 and E7**
+- [x] **Step 1: Run E6 and E7**
   `CONFIRM=1 COMBO="<chosen flags>" setsid nohup spike/storage/scripts/memory-experiments.sh > /dev/null 2>&1 < /dev/null &`. With an empty combination, `COMBO=""` still runs both with baseline settings plus `GOMEMLIMIT`. E0 to E5 are skipped because their reports exist, so this takes about an hour for the seven days plus five minutes real time.
 
-- [ ] **Step 2: Check against the thresholds**
+- [x] **Step 2: Check against the thresholds**
   Peak RSS of E6 and E7 against about 700 MB; E6 flush p95 against 1.82 s and commit p99 against the earlier accelerated run's; E7 commit p99 against 46 ms and worst query p99 against 2.05 s, all within 20%. E7 is valid only with `query_errors` of 0 and a non-zero count for every query; a run with failed or missing queries is re-run, not interpreted.
 
-- [ ] **Step 3: If a threshold is missed**
+- [x] **Step 3: If a threshold is missed**
   Memory missed, latency fine: do not retune further; record which part of memory stays after the combination and what it would take to move it, and recommend the 1.5 GB budget with the combination's settings kept if they helped. Memory met, latency regressed: drop the flag most likely responsible (a flush or commit regression points at the flag whose E-run regressed the same metric; a query regression points at `memory_limit`, the only flag that changes query execution) and re-run E6 and E7 once with the rest; if that run misses either threshold, treat it as the first case. Both missed: the first case. In no outcome does the note recommend settings whose own E7 did not pass.
+
+> Result: with `--allocator-background-threads` and `GOMEMLIMIT=192MiB`, E6 peaked at 788 MB (baseline 997), with flush p95 1,734 ms and commit p99 2,291 ms, both within thresholds. E7 peaked at 650 MB (baseline 852), with worst query p99 2.02 s, 0 query errors, and every query counted. But E7's commit p99 was 87 ms against 46 ms (+89%). Memory missed on E6 and latency regressed on E7: the "both missed" case.
+> Decision: as the plan says for this case, no further tuning. The note recommends the baseline settings and a 1.5 GB budget, because background threads cannot be recommended when their own E7 regressed commit p99. A control run to isolate that regression from `GOMEMLIMIT` and the sampler was proposed and not run; the note records the cause as not isolated.
 
 ### Task 7: Results note and design update
 
@@ -246,15 +249,41 @@ Go style follows `/go-style`; match the spike's existing conventions (external t
 - Modify: `docs/DESIGN.md`
 - Modify: `docs/spikes/storage.md`
 
-- [ ] **Step 1: Write the note**
+- [x] **Step 1: Write the note**
   `docs/spikes/memory.md`: environment; the attribution of E0's peak as a small table; the experiment table with peak RSS and the regression columns; the confirmation results; "what surprised us"; and the recommended DuckDB boot settings for the product, or the budget change. Link the raw reports' names.
 
-- [ ] **Step 2: Update the design**
+- [x] **Step 2: Update the design**
   In `docs/DESIGN.md`: replace the "Phase 0 did not meet the budget" paragraph with the measured outcome and the settings the product adopts (or the new budget); resolve or restate the memory open decision; add a decision-log row. In `docs/spikes/storage.md`, add one line under the memory section pointing to the memory note.
 
-- [ ] **Step 3: Verify**
+- [x] **Step 3: Verify**
   Run: `rite check && rite spike-check`
   Expected: both green.
 
-- [ ] **Step 4: Commit**
+- [x] **Step 4: Commit**
   `git commit -m "Record memory follow-up results and update the design"`
+
+> Deviation: the phase 0 sentence in DESIGN.md, "inside the 1 GB budget", now reads "inside what was then a 1 GB budget", so the doc does not state two budgets.
+
+---
+
+## Completion
+
+**Status: completed** (9 October 2026, branch `memory-followup`).
+
+**What was implemented.** Spike reports now carry a memory time series: process RSS, Go resident estimate, DuckDB memory by tag, the residual, and whether a flush was running. They also carry the peak sample and its ratio to `VmHWM`. DuckDB allocator settings, Parquet row-group size, and unsorted flush are CLI flags. `spike summarize` builds the results table. `scripts/memory-experiments.sh` runs the matrix and the confirmation, resumably. All runs finished. The results are in `docs/spikes/memory.md`, and DESIGN.md now states a 1.5 GB budget.
+
+**Outcome.** About 600 MB of the 874 MB one-day peak is jemalloc retention that DuckDB does not account for. Only `allocator_background_threads` helped, by about 200 MB. It peaked at 788 MB over seven days and regressed real-time commit p99 from 46 to 87 ms, so it is not recommended. `memory_limit = 128MB` runs out of memory in the flush sort. The recommendation is baseline settings and a 1.5 GB budget. A control run to isolate the commit regression from `GOMEMLIMIT` and the sampler was proposed and declined, and the note records the cause as not isolated.
+
+**Issues encountered.** A latent harness bug: `SET GLOBAL temp_directory` re-ran on each new pooled connection and failed after a spill. It was fixed by setting the directory once in the DSN, in `e3f0f31`, and the product's DuckDB boot needs the same. E3's out-of-memory failure stopped the script, which now carries on past a failed single-variable step (`fd5cdf2`). The session's task-list tool was unavailable, so this document was the only tracker.
+
+**Deviations, in one place.**
+- Task 1: `MemoryByTag` is a package function over `*sql.DB` or `*sql.Conn`, returning `store.Memory{ByTag, Temp}`. Its test asserts some non-zero tag rather than `BASE_TABLE`, because small inserts land in `IN_MEMORY_TABLE`.
+- Task 2: the sampler is in `internal/scenario/memory.go` with no mutex, since ownership is handed over through `stop`. The short smoke run's 1.25 ratio was a sampling artifact; 100 ms gave 1.01.
+- Task 3: `16MB` reads back as `15.2 MiB`. `copyStatement` is a `Flusher` method taking `time.Time` arguments.
+- Task 4: `FINE=1` (E0 at 100 ms), `combo.txt`, and an unfinished E7 forcing E6 to re-run. Memory is in decimal MB. A run report is a JSON file with a `mode`. Launch with `mise x --`.
+- Task 5: the temp directory fix. E3 recorded as failed and excluded. E0's ratio of 1.00 made the 100 ms re-run unnecessary. E2's ratio of 1.12 leaves its peak breakdown unknown.
+- Task 6: the "both missed" case. No control run.
+- Task 7: the phase 0 budget sentence was marked as historical.
+
+**What the plan could have specified better:** a control confirmation run with baseline settings, the sampler, and `GOMEMLIMIT`. Without it, a latency regression in E7 cannot be pinned on the flag under test, and the plan's "reject on regression" rule ends up rejecting the only lever found on confounded evidence. The plan could also have said whether a failed single-variable run counts as a result or as a blocker.
+

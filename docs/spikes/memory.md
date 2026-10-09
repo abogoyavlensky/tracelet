@@ -1,33 +1,39 @@
 # Memory follow-up results (phase 0b)
 
-Date: 8 October 2026. Plan: [2026-10-08-2143-memory-followup](../plans/2026-10-08-2143-memory-followup.md). Code: `spike/storage/` on branch `memory-followup`.
+Date: 9 October 2026. Plan: [2026-10-08-2143-memory-followup](../plans/2026-10-08-2143-memory-followup.md). Code: `spike/storage/` on branch `memory-followup`.
 
-**Draft:** attribution and single-variable runs only. Confirmation runs E6 and E7 are pending.
+The storage spike missed its 1 GB budget at the `busy` workload, with about 600 MB of native memory unattributed. This follow-up attributes it and tries the cheap levers.
+
+- **Where the memory goes:** at the one-day peak, Go holds about 20 MB, DuckDB's own accounting about 256 MB, and about 600 MB is memory DuckDB's bundled jemalloc keeps without DuckDB counting it.
+- **What helps:** only `allocator_background_threads`, which cuts peak RSS by about 200 MB. It does not reach the 700 MB target on seven days (788 MB), and its real-time confirmation run doubled commit p99 (87 ms against 46 ms). So it is not recommended.
+- **Recommendation:** keep the baseline DuckDB settings and publish a **1.5 GB** budget instead of 1 GB. The baseline settings peaked at 1,001 MB.
 
 ## Environment
 
-Same machine and toolchain as the [storage spike](storage.md#environment). Every run is `spike run --profile busy --threads 2` on a fresh data dir, from `spike/storage/scripts/memory-experiments.sh`, one at a time. Peak RSS is `VmHWM`, cross-checked with `/usr/bin/time -v`. Each run also samples memory once per wall-clock second: process RSS, the Go runtime's resident estimate (`Sys - HeapReleased`), DuckDB's `duckdb_memory()` by tag, and the residual that neither accounts for. Memory is in decimal MB.
+Same machine and toolchain as the [storage spike](storage.md#environment): a 4 vCPU KVM VM with 7.6 GB RAM, Go 1.27.1, and `duckdb-go` v2.10506.0 (DuckDB 1.5.6, static, bundled jemalloc). Every run is `spike run --profile busy --threads 2` on a fresh data dir. The runs went one at a time from `spike/storage/scripts/memory-experiments.sh`.
 
-## Where E0's memory goes
+Peak RSS is `VmHWM`, cross-checked with `/usr/bin/time -v`. Each run also samples memory once per wall-clock second. A sample records process RSS, the Go runtime's resident estimate (`Sys - HeapReleased`), DuckDB's `duckdb_memory()` by tag, and the residual that neither accounts for. The residual is a diagnostic: it includes allocator caches, mapped code, and thread stacks, and how it moves between runs says more than its absolute value. Memory is in decimal MB.
 
-E0 is the baseline: one simulated day with `memory_limit = 256MB` and allocator defaults. Its highest sample matches `VmHWM` exactly (ratio 1.00), so the breakdown below is the peak itself, not a neighbour of it.
+Raw reports are in `.tmp/memory/`: `e0-baseline.json` to `e7-confirm-rt.json`, with `summary.md` and one `/usr/bin/time` log per run.
 
-| At the peak | MB |
+## Where the memory goes
+
+E0 is the baseline: one simulated day with `memory_limit = 256MB` and allocator defaults. Its highest sample matches `VmHWM` exactly (ratio 1.00), so this breakdown is the peak itself.
+
+| E0 at the peak | MB |
 | --- | ---: |
 | RSS | 874 |
 | Go resident estimate | 21 |
 | DuckDB, by tag | 256: `COLUMN_DATA` 126, `ORDER_BY` 107, `ALLOCATOR` 19, `BASE_TABLE` 4 |
 | Residual | 597 |
 
-The peak sample was taken during a flush.
-
-- **The residual dominates.** It is about 600 MB at the peak and about 400 MB at the median, while Go stays near 20 MB and DuckDB never reports more than its 256 MB limit. The residual is memory DuckDB's bundled jemalloc holds without DuckDB counting it. At the end of the run DuckDB accounts for 9 MB while the residual is 655 MB.
-- **The residual has a floor of 80 to 90 MB.** That is the minimum over the run and roughly the first sample. It matches mapped code in an 80 MB static binary.
-- **The shape is a plateau with spikes.** The median RSS is 550 to 590 MB throughout the day, with spikes to 750 to 870 MB. The spikes are not tied to flushes: only 5 of the 20 highest samples were taken during a flush. The others come between flushes, when the 60-second commits build up `IN_MEMORY_TABLE` for the two hot hours.
+- **Allocator retention dominates.** The residual is about 600 MB at the peak and about 400 MB at the median. Go stays near 20 MB, and DuckDB never reports more than its 256 MB limit. At the end of the run DuckDB accounts for 9 MB while the residual is 655 MB: jemalloc keeps freed memory.
+- **About 85 MB of the residual is fixed.** The residual never falls below 80 to 90 MB, which matches mapped code in an 80 MB static binary.
+- **The shape is a plateau with spikes, not flush peaks.** The median RSS is 550 to 590 MB all day, with spikes to 750 to 870 MB. Only 5 of the 20 highest samples were taken during a flush. The rest come from the 60-second commits that fill `IN_MEMORY_TABLE` for the two hot hours.
 
 ## Single-variable runs
 
-Each run changes one thing against E0. All five completed runs have 0 sample errors and ingested the same 17.28 M rows into 118 files.
+Each run changes one thing against E0, over one simulated day. All of them ingested the same 17.28 M rows into 118 files, with no sample errors.
 
 | Run | Peak RSS (MB) | RSS at peak sample (MB) | Go resident at peak (MB) | DuckDB at peak (MB) | Residual at peak (MB) | Peak in flush | HWM / peak sample | Flush p95 (ms) | Commit p99 (ms) | Worst query p99 (ms) |
 | --- | ---: | ---: | ---: | ---: | ---: | --- | ---: | ---: | ---: | ---: |
@@ -38,20 +44,42 @@ Each run changes one thing against E0. All five completed runs have 0 sample err
 | e4-row-group-30k | 828 | 807 | 21 | 255 | 531 | no | 1.03 | 1367 | 2262 |  |
 | e5-unsorted | 811 | 803 | 23 | 256 | 524 | no | 1.01 | 707 | 2279 |  |
 
-- **E1, `allocator_flush_threshold = 16MB`:** no effect on the peak, which is 12 MB higher and within noise. The median RSS outside flushes falls from 548 to 505 MB.
-- **E2, `allocator_background_threads = true`:** peak RSS 741 MB, 133 MB below E0, and the median outside flushes falls from 548 to 392 MB. Flush p95 is 1.6% slower and commit p99 is unchanged. Its highest sample is 12% below `VmHWM`, so the breakdown at its peak is **unknown**. The sampled series shows the residual median falling from about 405 to about 250 MB, so the setting acts where E0 said it should, on allocator retention.
-- **E3, `memory_limit = 128MB`:** fails. The first hourly flush runs out of memory sorting an hour of logs in `COPY ... ORDER BY ts` ("failed to allocate data of size 5.0 MiB (117.3 MiB/122.0 MiB used)"). Two attempts failed the same way after about 30 s. With this flush, 128 MB is not a usable setting.
-- **E4, `ROW_GROUP_SIZE 30000`:** 46 MB lower, under the 50 MB bar, and flush p95 is 20.0% slower, right at the regression limit. Rejected.
-- **E5, `COPY` without `ORDER BY ts` (diagnostic):** 63 MB lower, and flush p95 falls by 38%. That is the sort's share. It is not a candidate, because sorted files are a design property.
+- **E1, `allocator_flush_threshold = 16MB`:** no effect on the peak. The median outside flushes falls from 548 to 505 MB.
+- **E2, `allocator_background_threads = true`:** peak 741 MB, 133 MB below E0, and the median outside flushes falls from 548 to 392 MB. Flush and commit latency are unchanged. The median residual falls from about 405 to about 250 MB, so it acts on allocator retention, as E0 suggested. Its highest sample is 12% below `VmHWM`, so the breakdown at its true peak is unknown.
+- **E3, `memory_limit = 128MB`:** fails. The first flush runs out of memory sorting an hour of logs in `COPY ... ORDER BY ts`: "failed to allocate data of size 5.0 MiB (117.3 MiB/122.0 MiB used)". Two attempts failed the same way. With this flush, 128 MB is not usable.
+- **E4, `ROW_GROUP_SIZE 30000`:** 46 MB lower, under the 50 MB bar. Flush p95 is 20.0% slower, right at the regression limit. Rejected.
+- **E5, `COPY` without `ORDER BY ts` (diagnostic only):** 63 MB lower, and flush p95 falls by 38%. That is the sort's share. Sorted files are a design property, so this is not a candidate.
 
-E1 to E5 come from one run each. The storage spike's one-day run of the same configuration reached 932 MB against E0's 874 MB, so run-to-run spread is probably tens of MB. That puts E1, E4, and E5 within noise and leaves E2 clearly outside it.
+Each configuration ran once. The storage spike's one-day run of the E0 configuration reached 932 MB against E0's 874 MB, so run-to-run spread is probably tens of MB. That puts E1, E4, and E5 within noise and leaves E2 clearly outside it.
 
-## Chosen combination
+Only E2 cut peak RSS by at least 50 MB without a regression, so the confirmation runs used it alone, with `GOMEMLIMIT=192MiB`.
 
-Only E2 cut peak RSS by at least 50 MB without a regression over 20%. The confirmation runs E6 and E7 therefore use `--allocator-background-threads` alone, with `GOMEMLIMIT=192MiB`.
+## Confirmation
 
-Even E2 alone leaves the one-day peak at 741 MB, above the 700 MB target. The seven-day confirmation will show whether it holds there.
+E6 is seven accelerated days. E7 is five minutes of real-time ingestion with two query loops, on E6's data. Thresholds are the storage spike's measurements plus 20%.
 
-## Harness fixes found on the way
+| Run | Peak RSS (MB) | Before | Flush p95 (ms) | Commit p99 (ms) | Worst query p99 (ms) |
+| --- | ---: | ---: | ---: | ---: | ---: |
+| e6-confirm-7d | **788** | 997 | 1734 (limit 2186) | 2291 (limit 2790) | |
+| e7-confirm-rt | 650 | 852 | 1504 | **87** (limit 55) | 2023 (limit 2460) |
 
-- `store.Open` re-ran `SET GLOBAL temp_directory` on every new pooled connection. Once DuckDB has spilled, that statement fails ("Cannot switch temporary directory after the current one has been used"), so every new connection after a spill failed. The 256 MB runs never hit it; E3 hit it at once. The temp directory is now set once, in the DSN. The product's DuckDB boot needs the same.
+E7 is valid: 0 query errors, and each of the six queries ran 123 or 124 times.
+
+- **Memory misses the target.** Background threads cut about 200 MB in both runs. Seven days still peak at 788 MB, against about 700.
+- **Real-time commit latency regresses.** Commit p99 is 87 ms against 46 ms. The p50 is 11.5 ms against 15 ms, so the regression is in the tail.
+- **The cause of the regression is not isolated.** E7 differs from the storage spike's real-time run in three ways: background threads, `GOMEMLIMIT`, and the once-per-second memory sampler, which briefly stops the world in `runtime.ReadMemStats`. A control run with baseline settings plus `GOMEMLIMIT` and the sampler would separate them. It was not run.
+
+At E6's highest sample, 720 MB, the memory left after background threads is Go 24 MB, DuckDB 237 MB, and a residual of 460 MB. DuckDB's share is almost all `IN_MEMORY_TABLE`, 208 MB: the two hot hours, which the 256 MB limit caps. Moving that share needs a lower `memory_limit`, which needs a flush that sorts in less memory than one hour of logs takes today. Moving the residual needs allocator settings whose latency effect is understood.
+
+## What surprised us
+
+- **`memory_limit` is close to fully used by the hot window.** At the peak, the two hot hours alone hold 208 MB of the 256 MB limit, so there is little headroom for the flush sort. That is why 128 MB fails at once.
+- **jemalloc keeps far more than DuckDB uses.** At the end of the one-day baseline, DuckDB accounts for 9 MB and the process holds 688 MB.
+- **`allocator_flush_threshold` does nothing for the peak.** Background threads are what returns memory.
+- **The storage spike's harness had a latent bug.** `store.Open` re-ran `SET GLOBAL temp_directory` on every new pooled connection, and DuckDB rejects that once it has spilled: "Cannot switch temporary directory after the current one has been used". At 256 MB no run spilled, so it never showed. The spike now sets the temp directory once, in the DSN, and the product's DuckDB boot must do the same.
+
+## Recommendation
+
+- **Budget:** publish 1.5 GB as the design objective at the `busy` workload. The baseline settings peaked at 1,001 MB over seven days, which leaves about 50% headroom.
+- **DuckDB boot settings for the product:** unchanged from phase 0: `memory_limit = 256MB`, `threads = 2`, `preserve_insertion_order = false`, and a temp directory inside the data dir, set once at database creation. No allocator settings.
+- **Revisit later:** `allocator_background_threads` saves about 200 MB and is the only lever found. It can be adopted if a run that isolates its effect on real-time commit latency shows the regression was not its doing. A lower `memory_limit` needs a different flush shape first.

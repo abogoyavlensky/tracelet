@@ -121,6 +121,8 @@ The threshold is under 1 GB. One 7-day run lands just below it and the other jus
 
 Capping the Go heap saves only about 50 MB, so most of the excess over the 256 MB `memory_limit` is native DuckDB memory. DuckDB's `memory_limit` governs its buffer manager, not every allocation. The 1-day run already reaches 932 MB, so this is a plateau reached early, not growth over time. The DuckDB build bundles its own jemalloc, so glibc allocator tuning will not help.
 
+The [memory follow-up](memory.md) attributes the excess to jemalloc retention and recommends a 1.5 GB budget with these settings unchanged.
+
 ## Volume and cost
 
 | | logs | spans | metric points | total |
