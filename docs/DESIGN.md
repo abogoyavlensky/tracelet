@@ -197,9 +197,9 @@ Provisional target: 1 to 4 seconds from server receipt to UI visibility under th
 
 Dashboards refresh every 2 to 5 seconds while visible. A coalesced server-sent event after each commit invalidates affected queries rather than refreshing everything. Live logs read from a cursor.
 
-Resource budget: comfortable operation in 1 GB RAM on a small VPS. This is a design objective, not a supported minimum. DuckDB gets an explicit memory limit, defaulting to 256 MB, two threads, and a temp directory inside the data directory. Query concurrency and deadlines are bounded. Whole-process RSS is what gets measured; Go heap limits do not cap DuckDB.
+Resource budget: comfortable operation in 1.5 GB RAM on a small VPS at the normal workload below. This is a design objective, not a supported minimum. DuckDB gets an explicit memory limit, defaulting to 256 MB, two threads, and a temp directory inside the data directory, set once when the database is created. Query concurrency and deadlines are bounded. Whole-process RSS is what gets measured; Go heap limits do not cap DuckDB.
 
-**Phase 0 did not meet the budget.** Peak RSS was 997 MB and 1,001 MB over 7 simulated days, and 852 MB in real-time ingestion with two concurrent query loops. Capping the Go heap saved only about 50 MB: the excess is native DuckDB memory outside its buffer-managed `memory_limit`, and it plateaus within the first day. Until a follow-up brings this down, no 1 GB claim is published (see open decisions).
+**Why 1.5 GB, not 1 GB.** Phase 0 peaked at 997 MB and 1,001 MB over 7 simulated days. The [memory follow-up](spikes/memory.md) attributed it: Go holds about 20 MB, DuckDB's own accounting stays within its 256 MB limit, and about 600 MB is memory DuckDB's bundled jemalloc keeps after DuckDB frees it. `allocator_background_threads` cut about 200 MB but still peaked at 788 MB over 7 days, and its real-time run doubled commit p99. A 128 MB `memory_limit` runs out of memory in the hourly flush's sort. No setting reached the 700 MB target without a regression, so the default settings stay and the budget is 1.5 GB.
 
 **Normal workload (phase 0).** The `busy` profile is 100 logs/s, 50 spans/s, and 50 metric points/s from 10 services in 2 environments over 500 metric series, with 1% of logs up to 3 hours late. That is 17.3 million rows and about 423 MB of Parquet per day. Measured at this workload:
 
@@ -237,7 +237,7 @@ Built frontend assets are embedded in the server executable; production needs no
 
 ## Delivery sequence and validation
 
-Phase 0 is done; its results are in [spikes/storage.md](spikes/storage.md). It was a throwaway spike, not product code: a load generator producing realistic logs, spans, and metrics at configurable rates and cardinality, driving a minimal ingestion path into the hot/cold layout for several simulated days. It must demonstrate, inside the 1 GB budget:
+Phase 0 is done; its results are in [spikes/storage.md](spikes/storage.md). It was a throwaway spike, not product code: a load generator producing realistic logs, spans, and metrics at configurable rates and cardinality, driving a minimal ingestion path into the hot/cold layout for several simulated days. It had to demonstrate, inside what was then a 1 GB budget:
 
 - flush and reconciliation under process termination at every step;
 - retention and ring-buffer deletion reclaiming disk under sustained ingestion;
@@ -251,7 +251,7 @@ Phases 1 to 4 follow the vision. Each feature ships with API and CLI access. Sco
 
 ## Open decisions
 
-- Memory: bring whole-process RSS at the `busy` workload from about 1.0 GB to about 700 MB, or change the published budget. First measure DuckDB's allocator settings, a 128 MB `memory_limit`, and smaller flush row groups, each on its own.
+- Memory below 1.5 GB: `allocator_background_threads` saves about 200 MB but regressed real-time commit p99 in a run that also changed `GOMEMLIMIT` and added sampling. Adopt it only after a run that isolates its effect on latency. A `memory_limit` below 256 MB needs a flush that sorts an hour in less memory.
 - Trace index: phase 0 showed it is needed (7-day lookup p95 1.03 s alone, 1.8 s under load). Open questions are its format and whether it is written at flush or compaction.
 - Query and flush consistency: a query overlapping a flush can see an hour twice or miss it. Pick either a read side of the maintenance lock or filtering hot rows by recorded cutoffs against a pinned snapshot.
 - Late-data compaction: 1% late logs triples the log file count; decide when an hour is closed and its small late files are merged.
@@ -271,6 +271,7 @@ Phases 1 to 4 follow the vision. Each feature ships with API and CLI access. Sco
 | Telemetry inbox in SQLite | Rejected | Direct DuckDB writes with ack after commit are sufficient; revisit only on measured need |
 | Cold file resolution | Manifest-resolved file lists, not a glob view | Exact pruning, no empty-glob failures, one source of truth; measured in phase 0 |
 | Flush rule | Per-hour ingest cutoff | Exports and deletes exactly the same rows without pausing ingestion; survived a process kill at every step in phase 0 |
+| Memory budget | 1.5 GB at the `busy` workload, default DuckDB settings | Default settings peaked at 1,001 MB over 7 days; allocator background threads, the only lever that helped, missed 700 MB and regressed commit latency; measured in the memory follow-up |
 | Hot window | Current and previous hour, hourly flush | Hot file flat at about 90 MB; flush at most about 2 s per signal and hour at `busy` |
 | MCP | Not planned | OpenAPI plus a JSON CLI is sufficient for agents and more stable |
 | Charts | uPlot | Small, fast, proven for time series in Grafana |
