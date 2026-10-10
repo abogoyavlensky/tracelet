@@ -101,6 +101,7 @@ func TestConvertUnknownService(t *testing.T) {
 	require.Len(t, c.Logs, 2)
 	assert.Equal(t, otlp.UnknownService, c.Logs[0].Service)
 	assert.Equal(t, int64(2), c.UnknownService)
+	assert.Equal(t, otlp.DefaultEnvironment, c.Logs[0].Environment)
 	assert.Empty(t, c.Logs[0].Resource, "no attributes is NULL, not {}")
 	assert.Empty(t, c.Logs[0].Body)
 }

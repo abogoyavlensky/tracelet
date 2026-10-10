@@ -20,6 +20,10 @@ import (
 // service.name, as the OpenTelemetry SDKs default it.
 const UnknownService = "unknown_service"
 
+// DefaultEnvironment is the environment of records whose resource has no
+// deployment.environment.name.
+const DefaultEnvironment = "default"
+
 // Resource attributes Tracelet files rows under.
 const (
 	attrServiceName    = "service.name"
@@ -63,6 +67,9 @@ func ConvertLogs(req *logspb.LogsData, projectID string) Converted {
 		}
 		resource := jsonObject(resAttrs)
 		environment := stringAttr(resAttrs, attrEnvironment)
+		if environment == "" {
+			environment = DefaultEnvironment
+		}
 		version := stringAttr(resAttrs, attrServiceVersion)
 
 		for _, sl := range rl.GetScopeLogs() {
