@@ -5,6 +5,8 @@ go 1.27
 require (
 	github.com/duckdb/duckdb-go/v2 v2.10506.0
 	github.com/stretchr/testify v1.12.1
+	go.opentelemetry.io/proto/otlp v1.11.1
+	google.golang.org/protobuf v1.36.12
 	modernc.org/sqlite v1.60.1
 )
 
