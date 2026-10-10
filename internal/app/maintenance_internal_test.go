@@ -49,7 +49,7 @@ func TestMaintenanceFlushesClosedHours(t *testing.T) {
 		dataDir:      dir,
 		diskFloor:    1 << 62, // more than any disk has, so pressure is set
 		diskPressure: pressure,
-		status:       &storageStatus{},
+		status:       &storageStatus{store: store, manifest: m, dataDir: dir, diskPressure: pressure},
 		logger:       slog.New(slog.NewTextHandler(io.Discard, nil)),
 	}
 

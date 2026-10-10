@@ -2,6 +2,7 @@ package app
 
 import (
 	"context"
+	"maps"
 	"sync"
 	"sync/atomic"
 	"time"
@@ -12,8 +13,10 @@ import (
 	"github.com/abogoyavlensky/tracelet/internal/manifest"
 )
 
-// storageStatus remembers the maintenance loop's last results and reports
-// them, with live storage counts, to the health endpoint.
+// storageStatus remembers the maintenance loop's last results and the
+// storage counts it last took, and reports them to the health endpoint.
+// Counts are refreshed by maintenance, not per request, so an
+// unauthenticated health check never scans the hot tables.
 type storageStatus struct {
 	store        *duckdb.Store
 	manifest     *manifest.Manifest
@@ -25,6 +28,8 @@ type storageStatus struct {
 	lastFlushDur  time.Duration
 	lastFlushErr  string
 	lastRetention *httpapi.RetentionReport
+	counts        httpapi.StorageReport
+	countsErr     error
 }
 
 func (s *storageStatus) recordFlush(at time.Time, dur time.Duration, err error) {
@@ -41,9 +46,17 @@ func (s *storageStatus) recordRetention(at time.Time, rep flush.RetentionReport,
 	}
 }
 
-// StorageStats reads hot hours per signal, cold totals, and free disk.
-func (s *storageStatus) StorageStats(ctx context.Context) (httpapi.StorageReport, error) {
-	rep := httpapi.StorageReport{HotHours: map[string]int{}, DiskPressure: s.diskPressure.Load()}
+// refresh takes the storage counts: hot hours per signal, cold totals, and
+// free disk.
+func (s *storageStatus) refresh(ctx context.Context) {
+	counts, err := s.count(ctx)
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.counts, s.countsErr = counts, err
+}
+
+func (s *storageStatus) count(ctx context.Context) (httpapi.StorageReport, error) {
+	rep := httpapi.StorageReport{HotHours: map[string]int{}}
 	for _, signal := range duckdb.Signals {
 		hours, err := s.store.HotHours(ctx, signal)
 		if err != nil {
@@ -58,9 +71,20 @@ func (s *storageStatus) StorageStats(ctx context.Context) (httpapi.StorageReport
 	if rep.DiskFree, err = flush.DiskFree(s.dataDir); err != nil {
 		return rep, err
 	}
+	return rep, nil
+}
 
+// StorageStats returns the last counts with the last maintenance results. It
+// fails when the last refresh did.
+func (s *storageStatus) StorageStats(context.Context) (httpapi.StorageReport, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
+	if s.countsErr != nil {
+		return httpapi.StorageReport{}, s.countsErr
+	}
+	rep := s.counts
+	rep.HotHours = maps.Clone(s.counts.HotHours)
+	rep.DiskPressure = s.diskPressure.Load()
 	rep.LastFlush, rep.LastFlushDuration, rep.LastFlushError = s.lastFlush, s.lastFlushDur, s.lastFlushErr
 	if s.lastRetention != nil {
 		r := *s.lastRetention

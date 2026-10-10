@@ -60,11 +60,17 @@ func New(ctx context.Context, cfg Config, logger *slog.Logger) (*App, error) {
 
 	a := &App{cfg: cfg, logger: logger, diskPressure: &atomic.Bool{}}
 	if err := a.build(ctx); err != nil {
+		if a.listener != nil {
+			err = errors.Join(err, a.listener.Close())
+		}
 		return nil, errors.Join(err, a.closeStorage())
 	}
 	return a, nil
 }
 
+// build opens everything in dependency order. The admin token is bootstrapped
+// last, once nothing else can fail, so a plaintext that is never printed is
+// never stored either.
 func (a *App) build(ctx context.Context) error {
 	if err := a.openStorage(ctx); err != nil {
 		return err
@@ -81,13 +87,19 @@ func (a *App) build(ctx context.Context) error {
 	}
 	a.ingester = ingest.New(a.writer, ingest.DefaultConfig)
 
-	projects := project.NewService(sqlite.NewProjectStore(a.db), time.Now, rand.Reader)
-	a.bootstrapToken, err = projects.Bootstrap(ctx, a.cfg.AdminToken)
+	a.status = &storageStatus{store: a.store, manifest: a.manifest, dataDir: a.cfg.DataDir, diskPressure: a.diskPressure}
+	a.status.refresh(ctx)
+
+	assets, err := web.Assets()
 	if err != nil {
-		return err
+		return fmt.Errorf("load frontend assets: %w", err)
+	}
+	a.listener, err = net.Listen("tcp", a.cfg.Addr)
+	if err != nil {
+		return fmt.Errorf("listen: %w", err)
 	}
 
-	a.status = &storageStatus{store: a.store, manifest: a.manifest, dataDir: a.cfg.DataDir, diskPressure: a.diskPressure}
+	projects := project.NewService(sqlite.NewProjectStore(a.db), time.Now, rand.Reader)
 	api := httpapi.NewHandler(httpapi.Deps{
 		Info:         httpapi.Info{Version: a.cfg.Version},
 		Auth:         projects,
@@ -100,25 +112,17 @@ func (a *App) build(ctx context.Context) error {
 		DiskPressure: a.diskPressure.Load,
 		Logger:       a.logger,
 	})
-
-	assets, err := web.Assets()
-	if err != nil {
-		return fmt.Errorf("load frontend assets: %w", err)
-	}
 	mux := http.NewServeMux()
 	mux.Handle("/api/", api)
 	mux.Handle("/v1/", api)
 	mux.Handle("/", web.NewHandler(assets))
-
-	a.listener, err = net.Listen("tcp", a.cfg.Addr)
-	if err != nil {
-		return fmt.Errorf("listen: %w", err)
-	}
 	a.server = &http.Server{
 		Handler:           mux,
 		ReadHeaderTimeout: 10 * time.Second,
 	}
-	return nil
+
+	a.bootstrapToken, err = projects.Bootstrap(ctx, a.cfg.AdminToken)
+	return err
 }
 
 // BootstrapToken is the admin token created on this start, or "" when one

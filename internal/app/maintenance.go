@@ -84,6 +84,7 @@ func (m maintenance) run(ctx context.Context, now time.Time) {
 		attrs = append(attrs, "disk_free", free, "disk_pressure", m.diskPressure.Load())
 	}
 
+	m.status.refresh(ctx)
 	m.logger.InfoContext(ctx, "maintenance", attrs...)
 }
 
