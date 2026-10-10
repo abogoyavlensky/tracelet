@@ -40,6 +40,11 @@ var columns = map[string]string{
 // predates any later hot DELETE, a flush can neither duplicate nor hide an
 // hour. File paths are server-generated and interpolated; everything else is
 // a parameter.
+//
+// Each call reads the manifest afresh, so rows committed after Open and
+// flushed before a later call can appear in that call's cold half. Nothing is
+// counted twice or missed, but two Source calls on one Snapshot are not a
+// repeatable read; queries that must agree with each other share one call.
 func (s *Snapshot) Source(ctx context.Context, signal string, from, to time.Time) (string, []any, error) {
 	if err := duckdb.CheckSignal(signal); err != nil {
 		return "", nil, err
