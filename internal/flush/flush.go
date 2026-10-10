@@ -120,8 +120,12 @@ func (f *Flusher) flushHour(ctx context.Context, signal string, hour time.Time) 
 	final := filepath.Join(f.DataDir, st.Path)
 	tmp := final + ".tmp"
 
-	// 0. Finish any earlier flush of this hour that was recorded but whose
-	// delete did not run, so its rows are not exported a second time.
+	// 0. Finish any earlier flush of this hour that did not complete, so its
+	// rows are not exported a second time: record a file that was published
+	// but not recorded, then delete hot rows that recorded files hold.
+	if err := f.adoptOrphans(ctx, signal, hour); err != nil {
+		return st, false, err
+	}
 	prev, recorded, err := f.Manifest.MaxIngestCutoff(ctx, signal, hour)
 	if err != nil {
 		return st, false, err
@@ -185,6 +189,48 @@ func (f *Flusher) flushHour(ctx context.Context, signal string, hour time.Time) 
 	st.Rows, st.Bytes = file.Rows, file.Bytes
 	st.Duration = time.Since(start)
 	return st, true, nil
+}
+
+// adoptOrphans records final-named files of one (signal, hour) that are on
+// disk but not in the manifest, as Reconcile does at startup. Without it, a
+// flush that failed between rename and record would be retried by the next
+// maintenance tick, export the same rows again, and leave two files holding
+// them once Reconcile adopted the first.
+func (f *Flusher) adoptOrphans(ctx context.Context, signal string, hour time.Time) error {
+	relDir := HourDir(signal, hour)
+	entries, err := os.ReadDir(filepath.Join(f.DataDir, relDir))
+	if err != nil {
+		if os.IsNotExist(err) {
+			return nil
+		}
+		return fmt.Errorf("list %s: %w", relDir, err)
+	}
+	files, err := f.Manifest.HourFiles(ctx, hour)
+	if err != nil {
+		return err
+	}
+	recorded := map[string]bool{}
+	for _, file := range files {
+		recorded[file.Path] = true
+	}
+	for _, e := range entries {
+		if e.IsDir() || !strings.HasSuffix(e.Name(), ".parquet") {
+			continue
+		}
+		rel := filepath.ToSlash(filepath.Join(relDir, e.Name()))
+		if recorded[rel] {
+			continue
+		}
+		file, err := describeFile(ctx, f.Store.DB(), filepath.Join(f.DataDir, rel))
+		if err != nil {
+			return err
+		}
+		file.Signal, file.Hour, file.Path = signal, hour, rel
+		if err := f.Manifest.Add(ctx, file); err != nil {
+			return err
+		}
+	}
+	return nil
 }
 
 func (f *Flusher) hook(step string) error {

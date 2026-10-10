@@ -118,6 +118,10 @@ func TestEmptyManifest(t *testing.T) {
 	total, err := m.TotalBytes(t.Context())
 	require.NoError(t, err)
 	assert.Zero(t, total)
+
+	maxIngest, err := m.MaxIngestTS(t.Context())
+	require.NoError(t, err)
+	assert.True(t, maxIngest.IsZero())
 }
 
 func TestMaxIngestCutoff(t *testing.T) {
@@ -132,4 +136,8 @@ func TestMaxIngestCutoff(t *testing.T) {
 	require.NoError(t, err)
 	assert.True(t, ok)
 	assert.Equal(t, second.MaxIngestTS, cutoff)
+
+	maxIngest, err := m.MaxIngestTS(t.Context())
+	require.NoError(t, err)
+	assert.Equal(t, second.MaxIngestTS, maxIngest)
 }

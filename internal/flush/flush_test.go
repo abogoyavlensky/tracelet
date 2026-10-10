@@ -218,6 +218,39 @@ func TestRetryAfterFailedDeleteDoesNotDuplicate(t *testing.T) {
 	assert.Zero(t, e.hotCount(t, "logs", h0, h1))
 }
 
+func TestRetryAfterFailedRecordDoesNotDuplicate(t *testing.T) {
+	t.Parallel()
+	e, rows := ingest3h(t)
+	ctx := t.Context()
+
+	// The file is published but the manifest insert never happens, and the
+	// next maintenance tick retries without a restart in between.
+	e.Flusher.Hook = func(step string) error {
+		if step == flush.StepRenamed {
+			return errors.New("record failed")
+		}
+		return nil
+	}
+	_, err := e.Flusher.FlushDue(ctx, h2)
+	require.Error(t, err)
+
+	e.Flusher.Hook = nil
+	_, err = e.Flusher.FlushDue(ctx, h2)
+	require.NoError(t, err)
+	_, err = e.Flusher.Reconcile(ctx)
+	require.NoError(t, err)
+
+	bySignal, missing, unrecorded := e.accounting(t)
+	for _, signal := range duckdb.Signals {
+		c := bySignal[signal]
+		assert.Equal(t, rows[signal], c.Total, "%s: nothing lost", signal)
+		assert.Equal(t, rows[signal], c.DistinctKeys, "%s: nothing duplicated", signal)
+	}
+	assert.Empty(t, missing)
+	assert.Empty(t, unrecorded)
+	assert.Zero(t, e.hotCount(t, "logs", h0, h1))
+}
+
 func TestReconcileAfterCrashAtEachStep(t *testing.T) {
 	t.Parallel()
 	for _, step := range []string{flush.StepWritten, flush.StepRenamed, flush.StepRecorded, flush.StepDeleted} {

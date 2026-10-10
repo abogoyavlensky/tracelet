@@ -37,21 +37,25 @@ const maxIngestSQL = `SELECT max(m) FROM (
   UNION ALL SELECT max(ingest_ts) FROM metric_points)`
 
 // NewWriter opens a dedicated connection and one appender per hot table, and
-// seeds the last stamp from the hot tables so stamps keep increasing across
-// restarts and a clock that stepped backwards.
-func NewWriter(ctx context.Context, s *Store) (*Writer, error) {
+// seeds the last stamp from the later of floor and the hot tables' greatest
+// stamp, so stamps keep increasing across restarts and a clock that stepped
+// backwards. Callers pass the cold files' greatest ingest cutoff as floor:
+// once a flush empties hot, only the manifest remembers the stamps it used,
+// and a new row stamped below a file's cutoff would be deleted by the next
+// flush of its hour without being exported.
+func NewWriter(ctx context.Context, s *Store, floor time.Time) (*Writer, error) {
 	conn, err := s.Conn(ctx)
 	if err != nil {
 		return nil, fmt.Errorf("writer connection: %w", err)
 	}
 
-	w := &Writer{conn: conn}
+	w := &Writer{conn: conn, last: floor.UTC()}
 	var last sql.NullTime
 	if err := conn.QueryRowContext(ctx, maxIngestSQL).Scan(&last); err != nil {
 		_ = conn.Close()
 		return nil, fmt.Errorf("seed ingest stamp: %w", err)
 	}
-	if last.Valid {
+	if last.Valid && last.Time.After(w.last) {
 		w.last = last.Time.UTC()
 	}
 	err = conn.Raw(func(dc any) error {

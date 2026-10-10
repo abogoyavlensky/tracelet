@@ -49,10 +49,12 @@ func openEnv(t *testing.T, dataDir string) *env {
 	require.NoError(t, err)
 	_, err = sqlite.Migrate(t.Context(), db)
 	require.NoError(t, err)
-	w, err := duckdb.NewWriter(t.Context(), s)
+	m := manifest.New(db)
+	floor, err := m.MaxIngestTS(t.Context())
+	require.NoError(t, err)
+	w, err := duckdb.NewWriter(t.Context(), s, floor)
 	require.NoError(t, err)
 
-	m := manifest.New(db)
 	e := &env{
 		DataDir:  dataDir,
 		Store:    s,

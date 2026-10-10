@@ -55,7 +55,7 @@ func countRows(t *testing.T, s *duckdb.Store, table string) int {
 
 func TestWriterWritesBatch(t *testing.T) {
 	s := openStore(t)
-	w, err := duckdb.NewWriter(t.Context(), s)
+	w, err := duckdb.NewWriter(t.Context(), s, time.Time{})
 	require.NoError(t, err)
 	t.Cleanup(func() { _ = w.Close() })
 
@@ -79,7 +79,7 @@ func TestWriterWritesBatch(t *testing.T) {
 
 func TestWriterEmptyBatch(t *testing.T) {
 	s := openStore(t)
-	w, err := duckdb.NewWriter(t.Context(), s)
+	w, err := duckdb.NewWriter(t.Context(), s, time.Time{})
 	require.NoError(t, err)
 	t.Cleanup(func() { _ = w.Close() })
 
@@ -91,7 +91,7 @@ func TestWriterEmptyBatch(t *testing.T) {
 
 func TestWriterStampsIncrease(t *testing.T) {
 	s := openStore(t)
-	w, err := duckdb.NewWriter(t.Context(), s)
+	w, err := duckdb.NewWriter(t.Context(), s, time.Time{})
 	require.NoError(t, err)
 	t.Cleanup(func() { _ = w.Close() })
 
@@ -106,7 +106,7 @@ func TestWriterStampsIncrease(t *testing.T) {
 
 func TestWriterStampsEachRow(t *testing.T) {
 	s := openStore(t)
-	w, err := duckdb.NewWriter(t.Context(), s)
+	w, err := duckdb.NewWriter(t.Context(), s, time.Time{})
 	require.NoError(t, err)
 	t.Cleanup(func() { _ = w.Close() })
 
@@ -134,7 +134,7 @@ func TestWriterSeedsStampFromStore(t *testing.T) {
 	_, err = s.DB().Exec(`INSERT INTO logs (ts, ingest_ts, project, service) VALUES (?, ?, 'p', 'svc')`, future, future)
 	require.NoError(t, err)
 
-	w, err := duckdb.NewWriter(t.Context(), s)
+	w, err := duckdb.NewWriter(t.Context(), s, time.Time{})
 	require.NoError(t, err)
 	t.Cleanup(func() { _ = w.Close() })
 	_, err = w.Write(t.Context(), telemetry.Batch{Logs: sampleBatch(time.Now().UTC()).Logs[:1]})
@@ -143,6 +143,18 @@ func TestWriterSeedsStampFromStore(t *testing.T) {
 	stamps := ingestStamps(t, s, "logs")
 	require.Len(t, stamps, 2)
 	assert.Equal(t, future.Add(time.Microsecond), stamps[1])
+}
+
+func TestWriterSeedsStampFromFloor(t *testing.T) {
+	s := openStore(t)
+	floor := time.Now().UTC().Add(time.Hour).Truncate(time.Microsecond)
+	w, err := duckdb.NewWriter(t.Context(), s, floor)
+	require.NoError(t, err)
+	t.Cleanup(func() { _ = w.Close() })
+
+	_, err = w.Write(t.Context(), telemetry.Batch{Logs: sampleBatch(time.Now().UTC()).Logs[:1]})
+	require.NoError(t, err)
+	assert.Equal(t, []time.Time{floor.Add(time.Microsecond)}, ingestStamps(t, s, "logs"))
 }
 
 func ingestStamps(t *testing.T, s *duckdb.Store, table string) []time.Time {
@@ -170,7 +182,7 @@ func assertIncreasing(t *testing.T, stamps []time.Time, n int) {
 
 func TestWriterFailedBatchDoesNotLeak(t *testing.T) {
 	s := openStore(t)
-	w, err := duckdb.NewWriter(t.Context(), s)
+	w, err := duckdb.NewWriter(t.Context(), s, time.Time{})
 	require.NoError(t, err)
 	t.Cleanup(func() { _ = w.Close() })
 

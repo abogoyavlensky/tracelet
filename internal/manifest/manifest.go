@@ -212,3 +212,20 @@ func (m *Manifest) MaxIngestCutoff(ctx context.Context, signal string, hour time
 	}
 	return t, true, nil
 }
+
+// MaxIngestTS returns the greatest ingest cutoff over every file, or the zero
+// time when the manifest is empty. The writer never stamps at or below it.
+func (m *Manifest) MaxIngestTS(ctx context.Context) (time.Time, error) {
+	var s sql.NullString
+	if err := m.db.QueryRowContext(ctx, "SELECT max(max_ingest_ts) FROM files").Scan(&s); err != nil {
+		return time.Time{}, fmt.Errorf("max ingest ts: %w", err)
+	}
+	if !s.Valid {
+		return time.Time{}, nil
+	}
+	t, err := time.Parse(tsLayout, s.String)
+	if err != nil {
+		return time.Time{}, fmt.Errorf("parse max ingest ts: %w", err)
+	}
+	return t, nil
+}
