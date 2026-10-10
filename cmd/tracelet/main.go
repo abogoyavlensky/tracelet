@@ -13,31 +13,37 @@ import (
 	"syscall"
 
 	"github.com/abogoyavlensky/tracelet/internal/app"
+	"github.com/abogoyavlensky/tracelet/internal/cli"
 )
 
 // version is set at build time: -ldflags "-X main.version=...".
 var version = "dev"
 
-const usage = `Usage: tracelet <command> [flags]
-
-Commands:
-  serve     Run the server
-  version   Print the version
-
-Run "tracelet <command> -h" for the command's flags.
-`
-
 func main() {
-	if err := run(os.Args[1:], os.Stdout); err != nil {
+	args := os.Args[1:]
+	if len(args) > 0 && !isServerCommand(args[0]) {
+		os.Exit(cli.Run(args, os.Stdout, os.Stderr))
+	}
+	if err := run(args, os.Stdout); err != nil {
 		fmt.Fprintln(os.Stderr, err)
 		os.Exit(1)
 	}
 }
 
+// isServerCommand reports whether cmd runs here rather than in the API
+// client.
+func isServerCommand(cmd string) bool {
+	switch cmd {
+	case "serve", "version", "help", "-h", "--help":
+		return true
+	}
+	return false
+}
+
 // run dispatches the command so that deferred cleanup runs before exit.
 func run(args []string, stdout io.Writer) error {
 	if len(args) == 0 {
-		fmt.Fprint(stdout, usage)
+		fmt.Fprint(stdout, cli.Usage())
 		return errors.New("missing command")
 	}
 
@@ -48,7 +54,7 @@ func run(args []string, stdout io.Writer) error {
 		fmt.Fprintln(stdout, version)
 		return nil
 	case "help", "-h", "--help":
-		fmt.Fprint(stdout, usage)
+		fmt.Fprint(stdout, cli.Usage())
 		return nil
 	default:
 		return fmt.Errorf("unknown command %q", args[0])
