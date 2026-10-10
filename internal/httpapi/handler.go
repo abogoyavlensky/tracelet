@@ -9,6 +9,7 @@ import (
 	"io"
 	"log/slog"
 	"net/http"
+	"time"
 
 	"github.com/abogoyavlensky/tracelet/internal/project"
 )
@@ -24,6 +25,9 @@ type Deps struct {
 	Auth     Authenticator
 	Projects Projects
 	Ingester Ingester
+	Queries  Snapshots
+	// Now is the clock that default and relative search ranges end at.
+	Now func() time.Time
 	// DiskPressure reports whether free disk is under the floor, in which
 	// case ingestion is refused.
 	DiskPressure func() bool
@@ -36,6 +40,8 @@ type Handler struct {
 	auth         Authenticator
 	projects     Projects
 	ingester     Ingester
+	queries      Snapshots
+	now          func() time.Time
 	diskPressure func() bool
 	logger       *slog.Logger
 }
@@ -45,7 +51,10 @@ type Handler struct {
 func NewHandler(deps Deps) http.Handler {
 	h := &Handler{
 		info: deps.Info, auth: deps.Auth, projects: deps.Projects, ingester: deps.Ingester,
-		diskPressure: deps.DiskPressure, logger: deps.Logger,
+		queries: deps.Queries, now: deps.Now, diskPressure: deps.DiskPressure, logger: deps.Logger,
+	}
+	if h.now == nil {
+		h.now = time.Now
 	}
 
 	mux := http.NewServeMux()
@@ -55,6 +64,8 @@ func NewHandler(deps Deps) http.Handler {
 	mux.HandleFunc("GET /api/v1/tokens", h.requireScope(project.ScopeAdmin, h.listTokens))
 	mux.HandleFunc("POST /api/v1/tokens", h.requireScope(project.ScopeAdmin, h.createToken))
 	mux.HandleFunc("DELETE /api/v1/tokens/{id}", h.requireScope(project.ScopeAdmin, h.revokeToken))
+	mux.HandleFunc("GET /api/v1/logs", h.requireScope(project.ScopeRead, h.searchLogs))
+	mux.HandleFunc("GET /api/v1/services", h.requireScope(project.ScopeRead, h.services))
 	mux.HandleFunc("POST /v1/logs", h.requireScope(project.ScopeIngest, h.otlpLogs))
 	mux.HandleFunc("/api/", h.notFound)
 	mux.HandleFunc("/v1/", h.notFound)

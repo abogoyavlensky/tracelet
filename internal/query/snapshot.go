@@ -79,3 +79,17 @@ func (s *Snapshot) Close() {
 	s.release()
 	s.release = nil
 }
+
+// Opener opens snapshots over one store, manifest, and gate; it is what
+// handlers hold.
+type Opener struct {
+	Store    *duckdb.Store
+	Manifest *manifest.Manifest
+	Gate     *Gate
+	DataDir  string
+}
+
+// Open opens a snapshot; see the package-level Open.
+func (o Opener) Open(ctx context.Context) (*Snapshot, error) {
+	return Open(ctx, o.Store, o.Manifest, o.Gate, o.DataDir)
+}

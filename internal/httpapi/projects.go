@@ -12,6 +12,7 @@ import (
 type Projects interface {
 	CreateProject(ctx context.Context, slug, name string) (project.Project, error)
 	ListProjects(ctx context.Context) ([]project.Project, error)
+	FindBySlug(ctx context.Context, slug string) (project.Project, error)
 	CreateToken(ctx context.Context, p project.NewTokenParams) (project.Token, string, error)
 	ListTokens(ctx context.Context) ([]project.Token, error)
 	RevokeToken(ctx context.Context, id project.TokenID) error

@@ -35,6 +35,7 @@ const (
 	adminToken  = "tl_admin"
 	readToken   = "tl_read"
 	ingestToken = "tl_ingest"
+	readAll     = "tl_readall"
 )
 
 func newFakeAuth() fakeAuth {
@@ -42,6 +43,7 @@ func newFakeAuth() fakeAuth {
 		adminToken:  {ID: "a1", Scope: project.ScopeAdmin},
 		readToken:   {ID: "r1", Scope: project.ScopeRead, ProjectID: "p1", ProjectSlug: "shop"},
 		ingestToken: {ID: "i1", Scope: project.ScopeIngest, ProjectID: "p1", ProjectSlug: "shop"},
+		readAll:     {ID: "r2", Scope: project.ScopeRead},
 	}
 }
 
