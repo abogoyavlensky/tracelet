@@ -127,9 +127,14 @@ func TestEndToEnd(t *testing.T) {
 	go func() { runErr <- a.Run(ctx) }()
 	stopped := false
 	t.Cleanup(func() {
-		if !stopped {
-			cancel()
-			<-runErr
+		if stopped {
+			return
+		}
+		cancel()
+		select {
+		case <-runErr:
+		case <-time.After(cfg.ShutdownTimeout):
+			t.Error("Run did not return within the shutdown timeout")
 		}
 	})
 	s := server{t: t, base: "http://" + a.Addr()}
@@ -213,6 +218,7 @@ func TestEndToEnd(t *testing.T) {
 		stopped = true
 		require.NoError(t, err)
 	case <-time.After(cfg.ShutdownTimeout):
+		stopped = true // don't wait a second time in cleanup
 		t.Fatal("Run did not return within the shutdown timeout")
 	}
 }
