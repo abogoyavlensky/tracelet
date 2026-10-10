@@ -147,3 +147,24 @@ func TestBootstrapWithSeed(t *testing.T) {
 	var verr *project.ValidationError
 	require.ErrorAs(t, err, &verr)
 }
+
+func TestBootstrapRevokedSeed(t *testing.T) {
+	svc, _ := newService(t)
+	ctx := t.Context()
+	seed := "tl_seededadmintoken0123456789"
+	_, err := svc.Bootstrap(ctx, seed)
+	require.NoError(t, err)
+	tok, err := svc.Authenticate(ctx, seed)
+	require.NoError(t, err)
+	require.NoError(t, svc.RevokeToken(ctx, tok.ID))
+
+	_, err = svc.Bootstrap(ctx, seed)
+	var verr *project.ValidationError
+	require.ErrorAs(t, err, &verr)
+	assert.Contains(t, verr.Message, "revoked")
+	_, err = svc.Authenticate(ctx, seed)
+	require.ErrorIs(t, err, project.ErrUnauthorized, "the revoked seed stays revoked")
+
+	_, err = svc.Bootstrap(ctx, "tl_anotherseedtoken0123456789")
+	require.NoError(t, err)
+}

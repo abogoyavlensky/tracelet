@@ -185,6 +185,14 @@ func (s *Service) Bootstrap(ctx context.Context, seed string) (string, error) {
 			return "", invalid("TRACELET_ADMIN_TOKEN must start with %s and have at least 16 characters after it", TokenPrefix)
 		}
 		secret = secretFor(seed)
+		// A revoked seed stays revoked: reusing it would undo the revocation.
+		_, _, err := s.store.TokenByHash(ctx, secret.Hash)
+		if err == nil {
+			return "", invalid("TRACELET_ADMIN_TOKEN was revoked; set a new value to create an admin token")
+		}
+		if !errors.Is(err, ErrNotFound) {
+			return "", fmt.Errorf("bootstrap: %w", err)
+		}
 	} else {
 		secret, err = NewToken(s.rand)
 		if err != nil {
