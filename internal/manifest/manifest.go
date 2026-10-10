@@ -229,3 +229,12 @@ func (m *Manifest) MaxIngestTS(ctx context.Context) (time.Time, error) {
 	}
 	return t, nil
 }
+
+// Totals returns the number of recorded files and their total size.
+func (m *Manifest) Totals(ctx context.Context) (files, bytes int64, err error) {
+	err = m.db.QueryRowContext(ctx, "SELECT count(*), coalesce(sum(bytes), 0) FROM files").Scan(&files, &bytes)
+	if err != nil {
+		return 0, 0, fmt.Errorf("manifest totals: %w", err)
+	}
+	return files, bytes, nil
+}

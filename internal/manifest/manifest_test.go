@@ -70,6 +70,10 @@ func TestAddAndQuery(t *testing.T) {
 	total, err := m.TotalBytes(ctx)
 	require.NoError(t, err)
 	assert.Equal(t, int64(350), total)
+	files, bytes, err := m.Totals(ctx)
+	require.NoError(t, err)
+	assert.Equal(t, int64(3), files)
+	assert.Equal(t, int64(350), bytes)
 
 	hour, bytes, ok, err := m.OldestHour(ctx)
 	require.NoError(t, err)

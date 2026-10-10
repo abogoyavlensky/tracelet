@@ -52,30 +52,52 @@ type Handler struct {
 	logger       *slog.Logger
 }
 
-// NewHandler returns the API's http.Handler with every route registered.
-// The management API lives under /api/; OTLP lives under /v1/.
-func NewHandler(deps Deps) http.Handler {
+// API is the HTTP API: the routes, and the list of patterns they were
+// registered under.
+type API struct {
+	mux      *http.ServeMux
+	patterns []string
+}
+
+// ServeHTTP dispatches to the routes.
+func (a *API) ServeHTTP(w http.ResponseWriter, r *http.Request) { a.mux.ServeHTTP(w, r) }
+
+// Patterns returns every route pattern with a method, in registration order,
+// so a test can check them against the OpenAPI document.
+func (a *API) Patterns() []string { return append([]string(nil), a.patterns...) }
+
+func (a *API) handle(pattern string, h http.HandlerFunc) {
+	a.mux.HandleFunc(pattern, h)
+	a.patterns = append(a.patterns, pattern)
+}
+
+// NewHandler returns the API with every route registered. The management API
+// lives under /api/; OTLP lives under /v1/.
+func NewHandler(deps Deps) *API {
 	h := &Handler{
 		info: deps.Info, auth: deps.Auth, projects: deps.Projects, ingester: deps.Ingester,
-		queries: deps.Queries, ingestStats: deps.IngestStats, storageStats: deps.StorageStats, now: deps.Now, diskPressure: deps.DiskPressure, logger: deps.Logger,
+		queries: deps.Queries, ingestStats: deps.IngestStats, storageStats: deps.StorageStats, now: deps.Now,
+		diskPressure: deps.DiskPressure, logger: deps.Logger,
 	}
 	if h.now == nil {
 		h.now = time.Now
 	}
 
-	mux := http.NewServeMux()
-	mux.HandleFunc("GET /api/v1/health", h.health)
-	mux.HandleFunc("GET /api/v1/projects", h.requireScope(project.ScopeAdmin, h.listProjects))
-	mux.HandleFunc("POST /api/v1/projects", h.requireScope(project.ScopeAdmin, h.createProject))
-	mux.HandleFunc("GET /api/v1/tokens", h.requireScope(project.ScopeAdmin, h.listTokens))
-	mux.HandleFunc("POST /api/v1/tokens", h.requireScope(project.ScopeAdmin, h.createToken))
-	mux.HandleFunc("DELETE /api/v1/tokens/{id}", h.requireScope(project.ScopeAdmin, h.revokeToken))
-	mux.HandleFunc("GET /api/v1/logs", h.requireScope(project.ScopeRead, h.searchLogs))
-	mux.HandleFunc("GET /api/v1/services", h.requireScope(project.ScopeRead, h.services))
-	mux.HandleFunc("POST /v1/logs", h.requireScope(project.ScopeIngest, h.otlpLogs))
-	mux.HandleFunc("/api/", h.notFound)
-	mux.HandleFunc("/v1/", h.notFound)
-	return mux
+	a := &API{mux: http.NewServeMux()}
+	a.handle("GET /api/v1/health", h.health)
+	a.handle("GET /api/v1/openapi.yaml", h.openAPI)
+	a.handle("GET /api/v1/projects", h.requireScope(project.ScopeAdmin, h.listProjects))
+	a.handle("POST /api/v1/projects", h.requireScope(project.ScopeAdmin, h.createProject))
+	a.handle("GET /api/v1/tokens", h.requireScope(project.ScopeAdmin, h.listTokens))
+	a.handle("POST /api/v1/tokens", h.requireScope(project.ScopeAdmin, h.createToken))
+	a.handle("DELETE /api/v1/tokens/{id}", h.requireScope(project.ScopeAdmin, h.revokeToken))
+	a.handle("GET /api/v1/logs", h.requireScope(project.ScopeRead, h.searchLogs))
+	a.handle("GET /api/v1/services", h.requireScope(project.ScopeRead, h.services))
+	a.handle("POST /v1/logs", h.requireScope(project.ScopeIngest, h.otlpLogs))
+	// Unknown paths under the API prefixes are JSON 404s, not the frontend.
+	a.mux.HandleFunc("/api/", h.notFound)
+	a.mux.HandleFunc("/v1/", h.notFound)
+	return a
 }
 
 func (h *Handler) notFound(w http.ResponseWriter, _ *http.Request) {

@@ -73,6 +73,9 @@ func serve(args []string) error {
 	if err != nil {
 		return err
 	}
+	if token := a.BootstrapToken(); token != "" {
+		fmt.Fprintf(os.Stderr, "admin token: %s\nSave it now: it will not be shown again.\n", token)
+	}
 
 	return a.Run(ctx)
 }

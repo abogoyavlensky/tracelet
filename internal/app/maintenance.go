@@ -22,6 +22,7 @@ type maintenance struct {
 	dataDir      string
 	diskFloor    int64
 	diskPressure *atomic.Bool
+	status       *storageStatus
 	logger       *slog.Logger
 }
 
@@ -53,7 +54,9 @@ func (m maintenance) run(ctx context.Context, now time.Time) {
 	for _, st := range flushed {
 		rows += st.Rows
 	}
-	attrs = append(attrs, "flushed_hours", len(flushed), "flushed_rows", rows, "flush_duration", time.Since(start))
+	flushDur := time.Since(start)
+	m.status.recordFlush(time.Now().UTC(), flushDur, err)
+	attrs = append(attrs, "flushed_hours", len(flushed), "flushed_rows", rows, "flush_duration", flushDur)
 	if err != nil {
 		m.logger.ErrorContext(ctx, "flush", "err", err)
 	}
@@ -67,6 +70,7 @@ func (m maintenance) run(ctx context.Context, now time.Time) {
 	} else {
 		rep, err := m.flusher.ApplyRetention(ctx, m.policy, now)
 		release()
+		m.status.recordRetention(time.Now().UTC(), rep, err)
 		attrs = append(attrs, "retention_files", rep.FilesDeleted, "retention_bytes", rep.BytesFreed,
 			"retention_duration", time.Since(start))
 		if err != nil {
