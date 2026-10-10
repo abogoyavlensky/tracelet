@@ -23,21 +23,30 @@ type Deps struct {
 	Info     Info
 	Auth     Authenticator
 	Projects Projects
-	Logger   *slog.Logger
+	Ingester Ingester
+	// DiskPressure reports whether free disk is under the floor, in which
+	// case ingestion is refused.
+	DiskPressure func() bool
+	Logger       *slog.Logger
 }
 
 // Handler holds the dependencies the API handlers need.
 type Handler struct {
-	info     Info
-	auth     Authenticator
-	projects Projects
-	logger   *slog.Logger
+	info         Info
+	auth         Authenticator
+	projects     Projects
+	ingester     Ingester
+	diskPressure func() bool
+	logger       *slog.Logger
 }
 
 // NewHandler returns the API's http.Handler with every route registered.
 // The management API lives under /api/; OTLP lives under /v1/.
 func NewHandler(deps Deps) http.Handler {
-	h := &Handler{info: deps.Info, auth: deps.Auth, projects: deps.Projects, logger: deps.Logger}
+	h := &Handler{
+		info: deps.Info, auth: deps.Auth, projects: deps.Projects, ingester: deps.Ingester,
+		diskPressure: deps.DiskPressure, logger: deps.Logger,
+	}
 
 	mux := http.NewServeMux()
 	mux.HandleFunc("GET /api/v1/health", h.health)
@@ -46,7 +55,9 @@ func NewHandler(deps Deps) http.Handler {
 	mux.HandleFunc("GET /api/v1/tokens", h.requireScope(project.ScopeAdmin, h.listTokens))
 	mux.HandleFunc("POST /api/v1/tokens", h.requireScope(project.ScopeAdmin, h.createToken))
 	mux.HandleFunc("DELETE /api/v1/tokens/{id}", h.requireScope(project.ScopeAdmin, h.revokeToken))
+	mux.HandleFunc("POST /v1/logs", h.requireScope(project.ScopeIngest, h.otlpLogs))
 	mux.HandleFunc("/api/", h.notFound)
+	mux.HandleFunc("/v1/", h.notFound)
 	return mux
 }
 

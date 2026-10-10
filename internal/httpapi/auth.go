@@ -16,10 +16,17 @@ type Authenticator interface {
 
 type tokenKey struct{}
 
+// tokenFrom returns the authenticated token requireScope stored on the
+// request context.
+func tokenFrom(ctx context.Context) project.Token {
+	t, _ := ctx.Value(tokenKey{}).(project.Token)
+	return t
+}
+
 // requireScope authenticates the bearer token and lets the request through
 // only when the token grants scope. The token rides on the request context
 // (request-scoped metadata) for the handler's project checks.
-func (h *Handler) requireScope(scope project.Scope, next http.HandlerFunc) http.HandlerFunc { //nolint:unparam // ingest and read routes arrive with OTLP and search
+func (h *Handler) requireScope(scope project.Scope, next http.HandlerFunc) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		plaintext, ok := bearer(r)
 		if !ok {
