@@ -33,23 +33,6 @@
                :do [{:sh "rm -rf bin"}
                     {:sh "find internal/web/dist -mindepth 1 ! -name .gitkeep -delete"}]}
 
-  ;; The storage spike is a separate module so DuckDB and CGO stay out of the
-  ;; main binary; it is deliberately not part of check or build.
-  spike-check {:doc "Lint and test the storage spike module"
-               :cwd "spike/storage"
-               :do [{:sh "golangci-lint run"}
-                    {:sh "go test ./..."}]}
-
-  spike-build {:doc "Build the storage spike binary into spike/storage/bin/"
-               :cwd "spike/storage"
-               :do {:sh "go build -trimpath -o bin/spike ./cmd/spike"}}
-
-  spike-run   {:doc "Run a storage spike scenario into .tmp/spike"
-               :args [{:name :profile :type [:enum "small" "busy"]}
-                      {:name :days :type :int :default 7}]
-               :depends [spike-build]
-               :do {:sh "spike/storage/bin/spike run --profile {{arg/profile}} --days {{arg/days}} --data-dir .tmp/spike"}}
-
   web-install {:doc "Install frontend dependencies from the lockfile"
                :cwd "web"
                :do {:sh "npm ci"}}

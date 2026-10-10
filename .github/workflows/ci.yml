@@ -15,8 +15,19 @@ permissions:
 
 jobs:
   check:
-    runs-on: ubuntu-latest
-    timeout-minutes: 15
+    # Pinned rather than ubuntu-latest: the binary links DuckDB's static
+    # library against the runner's glibc, so the image decides the oldest
+    # glibc a release build runs on.
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - runner: ubuntu-24.04
+            arch: amd64
+          - runner: ubuntu-24.04-arm
+            arch: arm64
+    runs-on: ${{ matrix.runner }}
+    timeout-minutes: 30
     steps:
       - uses: actions/checkout@v7
 
@@ -30,14 +41,14 @@ jobs:
             ~/.cache/go-build
             ~/go/pkg/mod
             ~/.cache/golangci-lint
-          key: go-${{ runner.os }}-${{ hashFiles('go.sum') }}
-          restore-keys: go-${{ runner.os }}-
+          key: go-${{ runner.os }}-${{ matrix.arch }}-${{ hashFiles('go.sum') }}
+          restore-keys: go-${{ runner.os }}-${{ matrix.arch }}-
 
       - uses: actions/cache@v6
         with:
           path: ~/.npm
-          key: npm-${{ runner.os }}-${{ hashFiles('web/package-lock.json') }}
-          restore-keys: npm-${{ runner.os }}-
+          key: npm-${{ runner.os }}-${{ matrix.arch }}-${{ hashFiles('web/package-lock.json') }}
+          restore-keys: npm-${{ runner.os }}-${{ matrix.arch }}-
 
       - name: Install frontend dependencies
         run: rite web-install

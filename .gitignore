@@ -5,6 +5,7 @@ internal/web/dist/*
 
 # Frontend
 web/node_modules/
+web/*.tsbuildinfo
 
 # Runtime data
 data/
@@ -19,6 +20,5 @@ coverage.out
 .vscode/
 .DS_Store
 
-# Storage spike
-spike/storage/bin/
+# Scratch output, such as review reports
 .tmp/

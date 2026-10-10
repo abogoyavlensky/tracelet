@@ -1,6 +1,6 @@
 # Memory follow-up results (phase 0b)
 
-Date: 9 October 2026. Plan: [2026-10-08-2143-memory-followup](../plans/2026-10-08-2143-memory-followup.md). Code: `spike/storage/` on branch `memory-followup`.
+Date: 9 October 2026. Plan: [2026-10-08-2143-memory-followup](../plans/2026-10-08-2143-memory-followup.md). Code: `spike/storage/`, removed in the commit "Remove the storage spike now that its code lives in internal/"; last present at `52c70cc`.
 
 The storage spike missed its 1 GB budget at the `busy` workload, with about 600 MB of native memory unattributed. This follow-up attributes it and tries the cheap levers.
 
