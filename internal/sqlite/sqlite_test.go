@@ -1,6 +1,7 @@
 package sqlite_test
 
 import (
+	"os"
 	"path/filepath"
 	"testing"
 
@@ -70,4 +71,18 @@ func TestForeignKeysEnforced(t *testing.T) {
 	_, err = db.Exec(`INSERT INTO tokens (id, project_id, scope, name, prefix, hash, created_at)
 		VALUES ('t1', 'missing', 'ingest', 'x', 'abcdef', x'00', '2026-01-01T00:00:00Z')`)
 	require.Error(t, err)
+}
+
+func TestOpenPathWithURICharacters(t *testing.T) {
+	dir := filepath.Join(t.TempDir(), "odd?dir#1%20")
+	require.NoError(t, os.MkdirAll(dir, 0o755))
+	path := filepath.Join(dir, "tracelet.sqlite")
+
+	db, err := sqlite.Open(path)
+	require.NoError(t, err)
+	_, err = sqlite.Migrate(t.Context(), db)
+	require.NoError(t, err)
+	require.NoError(t, db.Close())
+
+	assert.FileExists(t, path)
 }
