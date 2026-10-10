@@ -69,7 +69,7 @@ func serve(args []string) error {
 
 	logger := slog.New(slog.NewJSONHandler(os.Stdout, nil))
 
-	a, err := app.New(cfg, logger)
+	a, err := app.New(ctx, cfg, logger)
 	if err != nil {
 		return err
 	}

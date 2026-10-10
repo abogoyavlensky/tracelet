@@ -2,6 +2,7 @@ package app_test
 
 import (
 	"testing"
+	"time"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -20,6 +21,40 @@ func TestParseServeConfigDefaults(t *testing.T) {
 	assert.Equal(t, "./data", cfg.DataDir)
 	assert.Equal(t, "1.2.3", cfg.Version)
 	assert.Positive(t, cfg.ShutdownTimeout)
+	assert.Equal(t, "256MB", cfg.DuckDBMemoryLimit)
+	assert.Equal(t, 2, cfg.DuckDBThreads)
+	assert.Equal(t, 30, cfg.RetentionDays)
+	assert.Zero(t, cfg.MaxTelemetryBytes)
+	assert.Equal(t, int64(1_000_000_000), cfg.DiskFloorBytes)
+	assert.Equal(t, time.Minute, cfg.MaintenanceInterval)
+	assert.Empty(t, cfg.AdminToken)
+}
+
+func TestParseServeConfigStorageFromEnv(t *testing.T) {
+	t.Setenv("TRACELET_DUCKDB_MEMORY_LIMIT", "1GB")
+	t.Setenv("TRACELET_DUCKDB_THREADS", "4")
+	t.Setenv("TRACELET_RETENTION_DAYS", "7")
+	t.Setenv("TRACELET_MAX_TELEMETRY_BYTES", "5000000000")
+	t.Setenv("TRACELET_DISK_FLOOR_BYTES", "0")
+	t.Setenv("TRACELET_MAINTENANCE_INTERVAL", "30s")
+	t.Setenv("TRACELET_ADMIN_TOKEN", "tl_seed")
+
+	cfg, err := app.ParseServeConfig([]string{"--retention-days", "3"}, "dev")
+	require.NoError(t, err)
+
+	assert.Equal(t, "1GB", cfg.DuckDBMemoryLimit)
+	assert.Equal(t, 4, cfg.DuckDBThreads)
+	assert.Equal(t, 3, cfg.RetentionDays, "flags override env")
+	assert.Equal(t, int64(5_000_000_000), cfg.MaxTelemetryBytes)
+	assert.Zero(t, cfg.DiskFloorBytes)
+	assert.Equal(t, 30*time.Second, cfg.MaintenanceInterval)
+	assert.Equal(t, "tl_seed", cfg.AdminToken)
+}
+
+func TestParseServeConfigRejectsBadEnv(t *testing.T) {
+	t.Setenv("TRACELET_DUCKDB_THREADS", "many")
+	_, err := app.ParseServeConfig(nil, "dev")
+	assert.ErrorContains(t, err, "TRACELET_DUCKDB_THREADS")
 }
 
 func TestParseServeConfigFlagsOverrideEnv(t *testing.T) {
@@ -41,6 +76,12 @@ func TestParseServeConfigRejectsBadInput(t *testing.T) {
 		{"positional argument", []string{"extra"}},
 		{"unknown flag", []string{"--nope"}},
 		{"empty data dir", []string{"--data-dir", ""}},
+		{"zero retention", []string{"--retention-days", "0"}},
+		{"negative max bytes", []string{"--max-telemetry-bytes", "-1"}},
+		{"negative disk floor", []string{"--disk-floor-bytes", "-1"}},
+		{"zero threads", []string{"--duckdb-threads", "0"}},
+		{"quoted memory limit", []string{"--duckdb-memory-limit", "1GB'; DROP"}},
+		{"zero interval", []string{"--maintenance-interval", "0s"}},
 	}
 
 	for _, tt := range tests {
