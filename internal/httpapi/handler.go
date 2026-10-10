@@ -26,6 +26,10 @@ type Deps struct {
 	Projects Projects
 	Ingester Ingester
 	Queries  Snapshots
+	// IngestStats and StorageStats feed the health endpoint; either may be
+	// nil, and its section is then left out.
+	IngestStats  IngestStats
+	StorageStats StorageStats
 	// Now is the clock that default and relative search ranges end at.
 	Now func() time.Time
 	// DiskPressure reports whether free disk is under the floor, in which
@@ -41,6 +45,8 @@ type Handler struct {
 	projects     Projects
 	ingester     Ingester
 	queries      Snapshots
+	ingestStats  IngestStats
+	storageStats StorageStats
 	now          func() time.Time
 	diskPressure func() bool
 	logger       *slog.Logger
@@ -51,7 +57,7 @@ type Handler struct {
 func NewHandler(deps Deps) http.Handler {
 	h := &Handler{
 		info: deps.Info, auth: deps.Auth, projects: deps.Projects, ingester: deps.Ingester,
-		queries: deps.Queries, now: deps.Now, diskPressure: deps.DiskPressure, logger: deps.Logger,
+		queries: deps.Queries, ingestStats: deps.IngestStats, storageStats: deps.StorageStats, now: deps.Now, diskPressure: deps.DiskPressure, logger: deps.Logger,
 	}
 	if h.now == nil {
 		h.now = time.Now
@@ -70,15 +76,6 @@ func NewHandler(deps Deps) http.Handler {
 	mux.HandleFunc("/api/", h.notFound)
 	mux.HandleFunc("/v1/", h.notFound)
 	return mux
-}
-
-type healthResponse struct {
-	Status  string `json:"status"`
-	Version string `json:"version"`
-}
-
-func (h *Handler) health(w http.ResponseWriter, _ *http.Request) {
-	writeJSON(w, http.StatusOK, healthResponse{Status: "ok", Version: h.info.Version})
 }
 
 func (h *Handler) notFound(w http.ResponseWriter, _ *http.Request) {
