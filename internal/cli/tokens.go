@@ -91,6 +91,10 @@ func runTokens(ctx context.Context, args []string, stdout, stderr io.Writer) err
 		if err := e.client.Delete(ctx, "/api/v1/tokens/"+url.PathEscape(pos[0])); err != nil {
 			return err
 		}
+		if e.json {
+			// The API answers 204 with no body; give scripts an object to parse.
+			return json.NewEncoder(stdout).Encode(map[string]any{"id": pos[0], "revoked": true})
+		}
 		fmt.Fprintf(stdout, "revoked token %s\n", pos[0])
 		return nil
 

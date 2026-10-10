@@ -76,7 +76,8 @@ func runLogs(ctx context.Context, args []string, stdout, stderr io.Writer) error
 			q.Set(k, v)
 		}
 	}
-	if *limit > 0 {
+	if *limit != 0 {
+		// Forwarded as given, so the server rejects a bad one.
 		q.Set("limit", fmt.Sprint(*limit))
 	}
 	for _, a := range attrs {

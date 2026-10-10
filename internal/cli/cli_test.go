@@ -54,6 +54,8 @@ func newFakeAPI(t *testing.T) (*fakeAPI, *httptest.Server) {
 		case "POST /api/v1/tokens":
 			w.WriteHeader(http.StatusCreated)
 			_, _ = w.Write([]byte(`{"id":"t1","scope":"ingest","token":"tl_0123456789abcdef0123456789abcdef01234567"}`))
+		case "DELETE /api/v1/tokens/t1":
+			w.WriteHeader(http.StatusNoContent)
 		case "GET /api/v1/logs":
 			_, _ = w.Write([]byte(logsJSON))
 		default:
@@ -160,4 +162,19 @@ func TestPositionalBeforeFlags(t *testing.T) {
 	code, _, _ := run(t, "projects", "create", "shop", "--name", "Shop", "--url", srv.URL)
 	assert.Equal(t, 1, code)
 	assert.JSONEq(t, `{"slug":"shop","name":"Shop"}`, f.body)
+}
+
+func TestTokensRevokeJSON(t *testing.T) {
+	t.Setenv("TRACELET_TOKEN", "tl_good")
+	_, srv := newFakeAPI(t)
+	code, out, errOut := run(t, "tokens", "revoke", "t1", "--url", srv.URL, "--json")
+	require.Equal(t, 0, code, errOut)
+	assert.JSONEq(t, `{"id":"t1","revoked":true}`, out)
+}
+
+func TestLogsSearchForwardsNegativeLimit(t *testing.T) {
+	t.Setenv("TRACELET_TOKEN", "tl_good")
+	f, srv := newFakeAPI(t)
+	run(t, "logs", "search", "--url", srv.URL, "--limit", "-1")
+	assert.Equal(t, "-1", f.last.URL.Query().Get("limit"))
 }
