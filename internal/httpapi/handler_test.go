@@ -13,7 +13,7 @@ import (
 )
 
 func TestHealthReportsVersion(t *testing.T) {
-	h := httpapi.NewHandler(httpapi.Info{Version: "1.2.3"})
+	h := httpapi.NewHandler(httpapi.Deps{Info: httpapi.Info{Version: "1.2.3"}})
 
 	rec := httptest.NewRecorder()
 	h.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/api/v1/health", nil))
@@ -31,7 +31,7 @@ func TestHealthReportsVersion(t *testing.T) {
 }
 
 func TestUnknownRouteIsJSONNotFound(t *testing.T) {
-	h := httpapi.NewHandler(httpapi.Info{})
+	h := httpapi.NewHandler(httpapi.Deps{})
 
 	rec := httptest.NewRecorder()
 	h.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/api/v1/nope", nil))

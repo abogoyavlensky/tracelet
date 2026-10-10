@@ -4,6 +4,7 @@ package app
 
 import (
 	"context"
+	"crypto/rand"
 	"database/sql"
 	"errors"
 	"fmt"
@@ -19,6 +20,7 @@ import (
 	"github.com/abogoyavlensky/tracelet/internal/flush"
 	"github.com/abogoyavlensky/tracelet/internal/httpapi"
 	"github.com/abogoyavlensky/tracelet/internal/manifest"
+	"github.com/abogoyavlensky/tracelet/internal/project"
 	"github.com/abogoyavlensky/tracelet/internal/query"
 	"github.com/abogoyavlensky/tracelet/internal/sqlite"
 	"github.com/abogoyavlensky/tracelet/internal/web"
@@ -59,7 +61,13 @@ func New(ctx context.Context, cfg Config, logger *slog.Logger) (*App, error) {
 		return nil, errors.Join(fmt.Errorf("load frontend assets: %w", err), a.closeStorage())
 	}
 
-	api := httpapi.NewHandler(httpapi.Info{Version: cfg.Version})
+	projects := project.NewService(sqlite.NewProjectStore(a.db), time.Now, rand.Reader)
+	api := httpapi.NewHandler(httpapi.Deps{
+		Info:     httpapi.Info{Version: cfg.Version},
+		Auth:     projects,
+		Projects: projects,
+		Logger:   logger,
+	})
 
 	mux := http.NewServeMux()
 	mux.Handle("/api/", api)
