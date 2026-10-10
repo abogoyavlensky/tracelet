@@ -62,12 +62,7 @@ func (f *Flusher) Reconcile(ctx context.Context) (ReconcileReport, error) {
 		if err != nil {
 			return rep, err
 		}
-		file, err := describeFile(ctx, f.Store.DB(), filepath.Join(f.DataDir, rel))
-		if err != nil {
-			return rep, err
-		}
-		file.Signal, file.Hour, file.Path = signal, hour, rel
-		if err := f.Manifest.Add(ctx, file); err != nil {
+		if err := f.adopt(ctx, signal, hour, rel); err != nil {
 			return rep, err
 		}
 		rep.Adopted++

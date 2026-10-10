@@ -221,16 +221,30 @@ func (f *Flusher) adoptOrphans(ctx context.Context, signal string, hour time.Tim
 		if recorded[rel] {
 			continue
 		}
-		file, err := describeFile(ctx, f.Store.DB(), filepath.Join(f.DataDir, rel))
-		if err != nil {
-			return err
-		}
-		file.Signal, file.Hour, file.Path = signal, hour, rel
-		if err := f.Manifest.Add(ctx, file); err != nil {
+		if err := f.adopt(ctx, signal, hour, rel); err != nil {
 			return err
 		}
 	}
 	return nil
+}
+
+// adopt records an unrecorded final-named file. The publishing flush may have
+// failed before its fsyncs, and the file's hot rows are deleted once it is
+// recorded, so the file and its directories are made durable first.
+func (f *Flusher) adopt(ctx context.Context, signal string, hour time.Time, rel string) error {
+	path := filepath.Join(f.DataDir, rel)
+	if err := syncFile(path); err != nil {
+		return err
+	}
+	if err := syncDirs(f.DataDir, filepath.Dir(filepath.FromSlash(rel))); err != nil {
+		return err
+	}
+	file, err := describeFile(ctx, f.Store.DB(), path)
+	if err != nil {
+		return err
+	}
+	file.Signal, file.Hour, file.Path = signal, hour, rel
+	return f.Manifest.Add(ctx, file)
 }
 
 func (f *Flusher) hook(step string) error {
