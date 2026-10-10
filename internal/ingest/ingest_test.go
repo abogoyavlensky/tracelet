@@ -184,20 +184,33 @@ func TestCloseDrainsQueue(t *testing.T) {
 		in.Close()
 		close(closed)
 	}()
-	require.Eventually(t, func() bool {
-		return errors.Is(in.Submit(t.Context(), logs(1)), ingest.ErrClosed)
-	}, time.Second, time.Millisecond, "intake stops at Close")
-
 	go func() {
-		for range 4 {
-			<-time.After(time.Millisecond)
-			w.gate <- struct{}{}
+		for range time.Tick(time.Millisecond) {
+			select {
+			case w.gate <- struct{}{}:
+			case <-closed:
+				return
+			}
 		}
 	}()
+
+	// Poll with a cancelled context so a submission that slips in before
+	// Close does not block; count those, since they must be committed too.
+	cancelled, cancel := context.WithCancel(t.Context())
+	cancel()
+	extra := 0
+	require.Eventually(t, func() bool {
+		err := in.Submit(cancelled, logs(1))
+		if err == nil || errors.Is(err, context.Canceled) {
+			extra++
+		}
+		return errors.Is(err, ingest.ErrClosed)
+	}, time.Second, time.Millisecond, "intake stops at Close")
+
 	<-closed
 	wg.Wait()
 	run.Wait()
-	assert.Equal(t, []int{1, 1, 1, 1}, w.Commits(), "every queued submission was committed")
+	assert.Len(t, w.Commits(), 4+extra, "every queued submission was committed")
 }
 
 func TestRecordRejected(t *testing.T) {
