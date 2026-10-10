@@ -1,6 +1,6 @@
 # Tracelet design
 
-Status: initial technical design, 7 October 2026. This document records the chosen implementation direction for the vision in [VISION.md](VISION.md). Decisions marked **decided** are the plan unless phase 0 measurements contradict them. Everything else is a candidate. Phase 0 measured the storage layout on 8 October 2026; see [the storage spike results](spikes/storage.md). Nothing else here has been built or benchmarked.
+Status: initial technical design, 7 October 2026. This document records the chosen implementation direction for the vision in [VISION.md](VISION.md). Decisions marked **decided** are the plan unless phase 0 measurements contradict them. Everything else is a candidate. Phase 0 measured the storage layout on 8 October 2026; see [the storage spike results](spikes/storage.md). Phase 1 slice 1 (10 October 2026, [plan](plans/2026-10-10-1027-logs-slice.md)) built the storage layer, projects and tokens, OTLP/HTTP logs ingestion, logs search, and the CLI for them; nothing else here has been built yet.
 
 ## Architecture
 
@@ -9,13 +9,15 @@ Status: initial technical design, 7 October 2026. This document records the chos
 | Go application | HTTP server, OTLP ingestion, API, background jobs, embedded frontend |
 | DuckDB | Query engine for all telemetry; native tables for the hot window |
 | Parquet files | Cold telemetry, one directory tree per signal, partitioned by hour |
-| SQLite | Projects, credentials, dashboards, alert rules and state, error groups, heartbeats, deployments, job queue, file manifest |
+| SQLite | One file, `tracelet.sqlite`, with one migration sequence: projects, credentials, the Parquet file manifest, and later dashboards, alert rules and state, error groups, heartbeats, deployments, job queue |
 | React frontend | Overview, explore, trace, dashboards, configuration |
 | CLI | Remote management and retrieval through the same HTTP API |
 
 **Go is the backend language (decided).** Rust was considered and has no advantage sufficient to change this.
 
 **Two databases, one process (decided).** DuckDB does analytical work and is poor at frequent small transactional updates. SQLite does transactional application state and is poor at analytical scans. SQLite is never an intermediate telemetry store; telemetry goes directly to DuckDB. Transactions do not span the two databases, so every job touching both must tolerate retries.
+
+**`modernc.org/sqlite` is the SQLite driver (decided, phase 1).** It is pure Go, so DuckDB stays the only native dependency, and the application-state workload is tiny. Migrations are embedded `.sql` files applied in name order and recorded in `schema_migrations`; there is no migration library.
 
 ## Data model
 
@@ -57,7 +59,7 @@ Every record keeps the event time and the ingest time. Delayed mobile telemetry 
 - **Cold:** a flush job exports completed hours to Parquet under `data/telemetry/<signal>/date=YYYY-MM-DD/hour=HH/<ulid>.parquet`, sorted by timestamp within the file. Multiple files per hour are allowed; late data for an already flushed hour produces another file.
 - **Queries (decided, phase 0).** Each query unions the hot table with `read_parquet([...], union_by_name = true)` over the exact files the manifest lists for the requested time range, using each file's real time range so late-data files are found. This replaces the earlier plan of a view over a hive-partitioned glob: the manifest gives exact pruning, never breaks on an empty match, and is the single source of truth for which files exist. The hive-style directory names stay for human legibility.
 
-**Flush by ingest cutoff (decided, phase 0).** The single writer stamps every batch with an `ingest_ts` strictly greater than the previous batch's. A flush of one hour captures `cutoff = max(ingest_ts)` for that hour and exports the rows at or below it, both in one DuckDB snapshot. It writes to a temporary name, fsyncs the file and its directories, renames it into place, and records the file in the SQLite manifest with `max_ingest_ts = cutoff`. Only then does it delete exactly `ts in hour AND ingest_ts <= cutoff` from the hot table. Rows that arrive for the hour after the cutoff stay hot and flush into another file later, so ingestion never pauses.
+**Flush by ingest cutoff (decided, phase 0).** The single writer stamps every row with an `ingest_ts` one microsecond after the previous row's (decided, phase 1), so `(ts, ingest_ts)` is a unique row key that cursor pagination relies on. At startup the writer seeds its last stamp from the greatest stamp in the hot tables and the greatest cutoff in the manifest, so stamps keep increasing across restarts and a clock that stepped back, even after a flush emptied hot. A flush of one hour captures `cutoff = max(ingest_ts)` for that hour and exports the rows at or below it, both in one DuckDB snapshot. It writes to a temporary name, fsyncs the file and its directories, renames it into place, and records the file in the SQLite manifest with `max_ingest_ts = cutoff`. Only then does it delete exactly `ts in hour AND ingest_ts <= cutoff` from the hot table. Rows that arrive for the hour after the cutoff stay hot and flush into another file later, so ingestion never pauses.
 
 On startup, reconciliation does four things:
 
@@ -68,11 +70,15 @@ On startup, reconciliation does four things:
 
 Retention runs after reconciliation. Phase 0 killed the process after every flush step and lost and duplicated nothing. The manifest stores signal, hour, row count, time range, ingest cutoff, bytes, and schema version per file, and powers storage visibility.
 
-Between the manifest insert and the hot delete, a query can see an hour's rows twice. The window is one `DELETE`, measured at 6.5 ms p50 and up to 1 s. A query that reads the manifest before a flush records a file and scans hot after the delete misses the hour instead. Both windows close with one query protocol (see open decisions).
+A flush also adopts published but unrecorded files of its hour before exporting, so a retry after a failed manifest insert does not export the same rows twice.
+
+**Query consistency: pinned snapshot plus cutoff filter (decided, phase 1).** Phase 0 showed a query overlapping a flush could see an hour twice (between the manifest insert and the hot delete) or miss it (manifest read before the insert, hot scanned after the delete). Every query now runs through a snapshot: it opens a DuckDB read transaction and pins it with a first read, then reads the manifest once. For each hour present in hot that the listed files cover, hot rows at or below that hour's greatest file cutoff are excluded, because the files hold them. The snapshot predates any delete that follows a manifest insert, so a flush can neither duplicate nor hide an hour, and flush never waits for queries. A read lock was rejected: queries would wait seconds behind each flush for no gain.
+
+**Queries and retention exclude each other (decided, phase 1).** A DuckDB snapshot protects hot rows only, and retention unlinks files. A slot semaphore of four, the query gate, sits between them: a snapshot holds one slot, retention all four. Every acquisition gives up when its context ends, which a `sync.RWMutex` cannot do, so a cancelled request never waits behind maintenance. Four slots are also the query concurrency bound, and every query request carries a 30 s deadline that covers waiting for a slot.
 
 **Retention** is per signal in days and deletes whole partitions, so reclaiming disk is a file removal. Each file is unlinked and its directory fsynced before its manifest row is removed, so an interrupted deletion completes on the next start and nothing is resurrected. Phase 0 held filesystem usage flat at 1.43 GB under a 3-day limit for 7 simulated days, with a retention pass costing about 15 ms. A configurable total telemetry size acts as a ring buffer: when exceeded, the oldest partitions go first and the health page records it. A free-disk floor rejects ingestion with a retryable error rather than filling the disk.
 
-**Backup** is `tracelet backup`: under the maintenance lock that also serialises flush and retention, force a flush, snapshot the manifest with `VACUUM INTO`, and copy exactly the files that snapshot lists. Parquet files are immutable so a plain copy is consistent, and restoring is opening a data directory on the copy. Phase 0 backed up 7 days of `busy` data (2.98 GB) in under 10 s. Copying a live SQLite or DuckDB file is documented as unsupported.
+**Backup** is `tracelet backup`: with retention held off through the query gate, force a flush, snapshot the manifest with `VACUUM INTO`, and copy exactly the files that snapshot lists. Parquet files are immutable so a plain copy is consistent, and restoring is opening a data directory on the copy. Phase 0 backed up 7 days of `busy` data (2.98 GB) in under 10 s. Copying a live SQLite or DuckDB file is documented as unsupported.
 
 **Schema evolution.** New columns are nullable. The hot table changes with `ALTER TABLE ADD COLUMN`; old Parquet files are read with union by name. The manifest records the schema version so migrations can rewrite old partitions if ever required.
 
@@ -82,12 +88,14 @@ Between the manifest insert and the hot delete, a query can see an hour's rows t
 
 ## Ingestion and durability
 
-Endpoints follow OTLP/HTTP: protobuf and JSON encodings, gzip accepted. gRPC is deferred until a real SDK needs it.
+Endpoints follow OTLP/HTTP at `/v1/logs` (and later `/v1/traces`, `/v1/metrics`), outside `/api/`, because every SDK appends that path to the configured endpoint (decided, phase 1). Users set `OTEL_EXPORTER_OTLP_ENDPOINT=http://host:8080` and nothing else. Gzip is accepted, and the 4 MB body limit applies before and after decompression.
+
+**Protobuf first (decided, phase 1).** OTLP/JSON encodes trace and span IDs as hex, which `protojson` does not, so correct support needs its own decoding. The Go, Java, Python, and .NET SDKs default to protobuf. JSON requests get 415 until the browser and mobile slice ([backlog](backlog/otlp-json-encoding.md)). gRPC is deferred until a real SDK needs it ([backlog](backlog/otlp-grpc.md)). Requests decode into `LogsData`, which is wire-identical to `ExportLogsServiceRequest`, so the gRPC-importing collector package stays out of the build.
 
 1. Authenticate the token, resolve the project, enforce request size and per-project limits.
 2. Decode and validate. Reject unsupported signal types explicitly. Report partial acceptance using the OTLP partial success response.
 3. Place accepted records in a bounded in-memory queue.
-4. A writer goroutine groups queued records into batches by time or size and writes one DuckDB transaction per batch.
+4. A writer goroutine groups queued records into batches by time or size and writes one DuckDB transaction per batch. **Bounds (decided, phase 1):** a commit closes at 2,000 rows or 250 ms after its first submission, whichever comes first. Phase 0 measured a 5 ms WAL sync per commit and multi-second stalls at 12,000-row commits; at the normal workload this is about four small commits a second. A request is never split across commits: splitting would let a later chunk fail after an earlier one committed, and the client's retry would duplicate the committed part. A request over 2,000 rows commits alone, bounded by the body limit.
 5. Respond success only after the batch containing the request's records commits.
 
 Data in the queue is unacknowledged, so a crash loses nothing the exporter believes delivered. A lost response after a commit can still produce duplicates. This is at-least-once, not exactly-once.
@@ -105,6 +113,8 @@ The `jobs` table holds: id, kind, payload JSON, run at, attempts, max attempts, 
 Rules: keep SQLite transactions short, never hold one open across a DuckDB query or a network call, and make every job idempotent.
 
 Job kinds in the first releases: hot-to-cold flush, retention, heartbeat evaluation, alert evaluation, notification delivery, deployment detection, error group maintenance, backup.
+
+**A maintenance ticker until phase 3 (decided, phase 1).** The jobs table arrives with alerts. Until then a goroutine owned by the app runs once a minute: flush due hours with no lock, then retention under the query gate's exclusive side (skipped until the next tick if queries hold it past 10 s), then a free-disk sample that pauses ingestion below the floor. Startup runs reconcile, then retention, before serving. Failures are logged and retried on the next tick.
 
 ## Core signals
 
@@ -216,7 +226,9 @@ Ingestion is protected by request limits, per-project quotas, and credential sco
 
 A single instance cannot alert on its own host failing. An external heartbeat monitor complements Tracelet where that matters.
 
-**UI bootstrap (decided).** On first start with no admin, the server prints a one-time setup URL to stdout. Visiting it creates the admin user. The UI uses a session cookie; the API uses bearer tokens.
+**UI bootstrap (decided).** On first start with no admin, the server prints a one-time setup URL to stdout. Visiting it creates the admin user. The UI uses a session cookie; the API uses bearer tokens. The setup URL arrives with the UI slice. Until then the server bootstraps for the CLI (decided, phase 1): with no active admin token it creates one and prints it once to stderr, or stores the hash of `TRACELET_ADMIN_TOKEN` for containers. Bootstrap runs last at startup, so a start that fails cannot store a token it never printed.
+
+**Tokens (decided, phase 1).** `tl_` plus 40 hex characters, sent only as `Authorization: Bearer`. SQLite stores the SHA-256 and a 6-character prefix for listing. Scopes are `ingest` (one project, write only), `read` (one project, or all), and `admin` (everything). Telemetry rows store the project's immutable random ID; the API and CLI speak slugs, so renaming a slug never touches telemetry.
 
 ## Stack and workflow
 
@@ -251,11 +263,9 @@ Phases 1 to 4 follow the vision. Each feature ships with API and CLI access. Sco
 
 ## Open decisions
 
-- Memory below 1.5 GB: `allocator_background_threads` saves about 200 MB but regressed real-time commit p99 in a run that also changed `GOMEMLIMIT` and added sampling. Adopt it only after a run that isolates its effect on latency. A `memory_limit` below 256 MB needs a flush that sorts an hour in less memory.
-- Trace index: phase 0 showed it is needed (7-day lookup p95 1.03 s alone, 1.8 s under load). Open questions are its format and whether it is written at flush or compaction.
-- Query and flush consistency: a query overlapping a flush can see an hour twice or miss it. Pick either a read side of the maintenance lock or filtering hot rows by recorded cutoffs against a pinned snapshot.
-- Late-data compaction: 1% late logs triples the log file count; decide when an hour is closed and its small late files are merged.
-- Writer batch bounds: commit cost is a WAL sync of about 5 ms plus occasional multi-second stalls for large batches; set the batch time and size caps.
+- Memory below 1.5 GB: `allocator_background_threads` saves about 200 MB but regressed real-time commit p99 in a run that also changed `GOMEMLIMIT` and added sampling. Adopt it only after a run that isolates its effect on latency ([backlog](backlog/allocator-background-threads-isolation-run.md)). A `memory_limit` below 256 MB needs a flush that sorts an hour in less memory.
+- Trace index: phase 0 showed it is needed (7-day lookup p95 1.03 s alone, 1.8 s under load). Open questions are its format and whether it is written at flush or compaction ([backlog](backlog/spans-ingestion-and-trace-index.md)).
+- Late-data compaction: 1% late logs triples the log file count; decide when an hour is closed and its small late files are merged ([backlog](backlog/late-data-compaction.md)).
 - Duplicate handling on ingest, out of scope for phase 0, needs its own design against the measured Appender throughput.
 - Non time-series chart components after the UI prototype.
 - Exact attribute redaction rule format.
@@ -272,6 +282,12 @@ Phases 1 to 4 follow the vision. Each feature ships with API and CLI access. Sco
 | Cold file resolution | Manifest-resolved file lists, not a glob view | Exact pruning, no empty-glob failures, one source of truth; measured in phase 0 |
 | Flush rule | Per-hour ingest cutoff | Exports and deletes exactly the same rows without pausing ingestion; survived a process kill at every step in phase 0 |
 | Memory budget | 1.5 GB at the `busy` workload, default DuckDB settings | Default settings peaked at 1,001 MB over 7 days; allocator background threads, the only lever that helped, missed 700 MB and regressed commit latency; measured in the memory follow-up |
+| Query consistency | Pinned DuckDB snapshot plus per-hour cutoff filter; retention excluded by a 4-slot query gate | Closes both overlap windows phase 0 found without making queries wait for flush |
+| Ingest stamps | One per row, a microsecond apart, seeded from hot and the manifest at startup | `(ts, ingest_ts)` becomes a unique key for cursors; survives restarts and clock steps |
+| Writer batches | 2,000 rows or 250 ms; a request is never split | Small commits at the normal workload; no partial commit for a retry to duplicate |
+| SQLite driver | `modernc.org/sqlite`, one `tracelet.sqlite` | Pure Go keeps DuckDB the only native dependency |
+| OTLP | `/v1/logs` over HTTP, protobuf first | The path SDKs append; JSON needs hex-ID decoding, gRPC a large dependency |
+| Jobs before phase 3 | A once-a-minute maintenance ticker | The jobs table arrives with alerts |
 | Hot window | Current and previous hour, hourly flush | Hot file flat at about 90 MB; flush at most about 2 s per signal and hour at `busy` |
 | MCP | Not planned | OpenAPI plus a JSON CLI is sufficient for agents and more stable |
 | Charts | uPlot | Small, fast, proven for time series in Grafana |

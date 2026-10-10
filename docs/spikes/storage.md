@@ -1,6 +1,6 @@
 # Storage spike results (phase 0)
 
-Date: 8 October 2026. Plan: [2026-10-07-2303-storage-spike](../plans/2026-10-07-2303-storage-spike.md). Code: `spike/storage/` on branch `storage-spike`.
+Date: 8 October 2026. Plan: [2026-10-07-2303-storage-spike](../plans/2026-10-07-2303-storage-spike.md). Code: `spike/storage/`, removed in the commit "Remove the storage spike now that its code lives in internal/"; last present at `52c70cc`.
 
 The spike built the smallest real version of the hot/cold storage path from [DESIGN.md](../DESIGN.md) and drove it with seven simulated days of the `busy` workload. Six of the eight checks pass. Two fail:
 

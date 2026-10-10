@@ -1,0 +1,420 @@
+openapi: 3.1.0
+info:
+  title: Tracelet API
+  version: v1
+  description: |
+    Management and query API under /api/v1/, and the OTLP/HTTP logs receiver
+    at /v1/logs.
+
+    Every route except health and this document needs a bearer token
+    (`Authorization: Bearer tl_...`). Tokens have one scope:
+
+    - `ingest`: writes telemetry to one project, through /v1/logs only.
+    - `read`: reads one project, or every project when created without one.
+    - `admin`: everything, including projects and tokens.
+
+    Errors are JSON objects `{"error": "..."}`. A 503 carries `Retry-After`.
+servers:
+  - url: http://localhost:8080
+security:
+  - bearer: []
+
+paths:
+  /v1/logs:
+    post:
+      summary: Ingest OTLP/HTTP logs
+      description: |
+        An OTLP `ExportLogsServiceRequest` in protobuf, optionally gzipped.
+        Needs an `ingest` token. The body may be at most 4 MB, before and
+        after decompression. A 200 means the records are stored. OTLP/JSON is
+        not supported yet and gets 415.
+      operationId: ingestLogs
+      parameters:
+        - name: Content-Encoding
+          in: header
+          schema: { type: string, enum: [gzip, identity] }
+      requestBody:
+        required: true
+        content:
+          application/x-protobuf:
+            schema: { type: string, format: binary }
+      responses:
+        "200":
+          description: |
+            An `ExportLogsServiceResponse`; its `partial_success` names
+            rejected records and the reason.
+          content:
+            application/x-protobuf:
+              schema: { type: string, format: binary }
+        "400": { $ref: "#/components/responses/Error" }
+        "401": { $ref: "#/components/responses/Error" }
+        "403": { $ref: "#/components/responses/Error" }
+        "413": { $ref: "#/components/responses/Error" }
+        "415": { $ref: "#/components/responses/Error" }
+        "503": { $ref: "#/components/responses/Unavailable" }
+
+  /api/v1/health:
+    get:
+      summary: Server health and counters
+      operationId: health
+      security: []
+      responses:
+        "200":
+          description: Health
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Health" }
+
+  /api/v1/openapi.yaml:
+    get:
+      summary: This document
+      operationId: openapi
+      security: []
+      responses:
+        "200":
+          description: The OpenAPI description
+          content:
+            application/yaml:
+              schema: { type: string }
+
+  /api/v1/projects:
+    get:
+      summary: List projects
+      description: Needs an `admin` token.
+      operationId: listProjects
+      responses:
+        "200":
+          description: Projects by slug
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [items]
+                properties:
+                  items:
+                    type: array
+                    items: { $ref: "#/components/schemas/Project" }
+        "401": { $ref: "#/components/responses/Error" }
+        "403": { $ref: "#/components/responses/Error" }
+    post:
+      summary: Create a project
+      description: Needs an `admin` token.
+      operationId: createProject
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [slug]
+              additionalProperties: false
+              properties:
+                slug: { type: string, pattern: "^[a-z0-9][a-z0-9-]{0,39}$" }
+                name: { type: string, description: Defaults to the slug. }
+      responses:
+        "201":
+          description: Created
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Project" }
+        "400": { $ref: "#/components/responses/Error" }
+        "401": { $ref: "#/components/responses/Error" }
+        "403": { $ref: "#/components/responses/Error" }
+        "409": { $ref: "#/components/responses/Error" }
+
+  /api/v1/tokens:
+    get:
+      summary: List tokens
+      description: Needs an `admin` token. Shows prefixes, never plaintexts.
+      operationId: listTokens
+      responses:
+        "200":
+          description: Tokens, oldest first
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [items]
+                properties:
+                  items:
+                    type: array
+                    items: { $ref: "#/components/schemas/Token" }
+        "401": { $ref: "#/components/responses/Error" }
+        "403": { $ref: "#/components/responses/Error" }
+    post:
+      summary: Create a token
+      description: |
+        Needs an `admin` token. The plaintext is in the response and cannot
+        be retrieved again. An ingest token needs a project; an admin token
+        cannot have one; a read token without one reads every project.
+      operationId: createToken
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [scope, name]
+              additionalProperties: false
+              properties:
+                project: { type: string, description: Project slug. }
+                scope: { $ref: "#/components/schemas/Scope" }
+                name: { type: string }
+      responses:
+        "201":
+          description: Created
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: "#/components/schemas/Token"
+                  - type: object
+                    required: [token]
+                    properties:
+                      token: { type: string, description: "The plaintext, tl_ plus 40 hex characters." }
+        "400": { $ref: "#/components/responses/Error" }
+        "401": { $ref: "#/components/responses/Error" }
+        "403": { $ref: "#/components/responses/Error" }
+        "404": { $ref: "#/components/responses/Error" }
+
+  /api/v1/tokens/{id}:
+    delete:
+      summary: Revoke a token
+      description: Needs an `admin` token.
+      operationId: revokeToken
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema: { type: string }
+      responses:
+        "204": { description: Revoked }
+        "401": { $ref: "#/components/responses/Error" }
+        "403": { $ref: "#/components/responses/Error" }
+        "404": { $ref: "#/components/responses/Error" }
+
+  /api/v1/logs:
+    get:
+      summary: Search logs
+      description: |
+        Needs a `read` token. Results are newest first. The first page
+        resolves `last` into an absolute range; `next_cursor` carries that
+        range, so later pages read the same window. A request with `cursor`
+        must not send `from`, `to`, or `last`. Without any of them the range
+        is the last hour.
+      operationId: searchLogs
+      parameters:
+        - $ref: "#/components/parameters/Project"
+        - { name: service, in: query, schema: { type: string } }
+        - { name: environment, in: query, schema: { type: string } }
+        - name: level
+          in: query
+          description: Minimum severity.
+          schema: { type: string, enum: [trace, debug, info, warn, error, fatal] }
+        - { name: q, in: query, description: Case-insensitive substring of the body., schema: { type: string } }
+        - { name: trace_id, in: query, schema: { type: string } }
+        - name: attr
+          in: query
+          description: Repeatable `key:value`, an exact match on a top-level attribute.
+          explode: true
+          schema: { type: array, items: { type: string } }
+        - $ref: "#/components/parameters/From"
+        - $ref: "#/components/parameters/To"
+        - $ref: "#/components/parameters/Last"
+        - { name: limit, in: query, schema: { type: integer, minimum: 1, maximum: 1000, default: 100 } }
+        - { name: cursor, in: query, schema: { type: string } }
+      responses:
+        "200":
+          description: One page
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/LogsPage" }
+        "400": { $ref: "#/components/responses/Error" }
+        "401": { $ref: "#/components/responses/Error" }
+        "403": { $ref: "#/components/responses/Error" }
+        "404": { $ref: "#/components/responses/Error" }
+        "503": { $ref: "#/components/responses/Unavailable" }
+
+  /api/v1/services:
+    get:
+      summary: Services with logs in a range
+      description: Needs a `read` token. Busiest first.
+      operationId: listServices
+      parameters:
+        - $ref: "#/components/parameters/Project"
+        - $ref: "#/components/parameters/From"
+        - $ref: "#/components/parameters/To"
+        - $ref: "#/components/parameters/Last"
+      responses:
+        "200":
+          description: Services
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [items, range]
+                properties:
+                  items:
+                    type: array
+                    items:
+                      type: object
+                      required: [service, logs]
+                      properties:
+                        service: { type: string }
+                        logs: { type: integer }
+                  range: { $ref: "#/components/schemas/Range" }
+        "400": { $ref: "#/components/responses/Error" }
+        "401": { $ref: "#/components/responses/Error" }
+        "403": { $ref: "#/components/responses/Error" }
+        "404": { $ref: "#/components/responses/Error" }
+        "503": { $ref: "#/components/responses/Unavailable" }
+
+components:
+  securitySchemes:
+    bearer:
+      type: http
+      scheme: bearer
+      description: A Tracelet token, `tl_` plus 40 hex characters.
+
+  parameters:
+    Project:
+      name: project
+      in: query
+      description: |
+        Project slug. Required for an all-projects token; a project-scoped
+        token may only name its own project.
+      schema: { type: string }
+    From:
+      name: from
+      in: query
+      description: RFC 3339 start, inclusive.
+      schema: { type: string, format: date-time }
+    To:
+      name: to
+      in: query
+      description: RFC 3339 end, exclusive.
+      schema: { type: string, format: date-time }
+    Last:
+      name: last
+      in: query
+      description: A Go duration ending now, such as `30m` or `2h`. Excludes `from` and `to`.
+      schema: { type: string }
+
+  responses:
+    Error:
+      description: An error
+      content:
+        application/json:
+          schema: { $ref: "#/components/schemas/Error" }
+    Unavailable:
+      description: Busy, out of disk, or out of time; retry after `Retry-After` seconds
+      headers:
+        Retry-After:
+          schema: { type: integer }
+      content:
+        application/json:
+          schema: { $ref: "#/components/schemas/Error" }
+
+  schemas:
+    Error:
+      type: object
+      required: [error]
+      properties:
+        error: { type: string }
+    Scope:
+      type: string
+      enum: [ingest, read, admin]
+    Project:
+      type: object
+      required: [id, slug, name, created_at]
+      properties:
+        id: { type: string, description: Immutable; stored in telemetry. }
+        slug: { type: string }
+        name: { type: string }
+        created_at: { type: string, format: date-time }
+    Token:
+      type: object
+      required: [id, scope, name, prefix, created_at]
+      properties:
+        id: { type: string }
+        project: { type: string, description: Project slug; absent for admin and all-project tokens. }
+        scope: { $ref: "#/components/schemas/Scope" }
+        name: { type: string }
+        prefix: { type: string, description: The first 6 characters after tl_. }
+        created_at: { type: string, format: date-time }
+        last_used_at: { type: string, format: date-time }
+        revoked_at: { type: string, format: date-time }
+    Range:
+      type: object
+      required: [from, to]
+      properties:
+        from: { type: string, format: date-time }
+        to: { type: string, format: date-time }
+    Log:
+      type: object
+      required: [ts, service, severity_number, body]
+      properties:
+        ts: { type: string, format: date-time }
+        observed_ts: { type: string, format: date-time }
+        service: { type: string }
+        environment: { type: string }
+        version: { type: string }
+        severity_number: { type: integer }
+        severity_text: { type: string }
+        body: { type: string }
+        trace_id: { type: string }
+        span_id: { type: string }
+        scope: { type: string }
+        resource: { type: object }
+        attributes: { type: object }
+    LogsPage:
+      type: object
+      required: [items, range, limit, truncated]
+      properties:
+        items:
+          type: array
+          items: { $ref: "#/components/schemas/Log" }
+        next_cursor: { type: string }
+        range: { $ref: "#/components/schemas/Range" }
+        limit: { type: integer }
+        truncated: { type: boolean, description: True when next_cursor is present. }
+    Health:
+      type: object
+      required: [status, version, ready]
+      properties:
+        status: { type: string, enum: [ok, degraded] }
+        version: { type: string }
+        ready: { type: boolean }
+        storage_error: { type: string }
+        ingest:
+          type: object
+          properties:
+            accepted_rows: { type: integer }
+            rejected_rows: { type: integer }
+            unknown_service_records: { type: integer }
+            overloaded_requests: { type: integer }
+            commits: { type: integer }
+            failed_commits: { type: integer }
+            queue_depth: { type: integer }
+            last_commit: { type: string, format: date-time }
+            last_commit_latency_ns: { type: integer }
+        storage:
+          type: object
+          properties:
+            hot_hours:
+              type: object
+              additionalProperties: { type: integer }
+            cold_files: { type: integer }
+            cold_bytes: { type: integer }
+            disk_free: { type: integer }
+            disk_pressure: { type: boolean }
+            last_flush: { type: string, format: date-time }
+            last_flush_duration_ns: { type: integer }
+            last_flush_error: { type: string }
+            last_retention:
+              type: object
+              properties:
+                at: { type: string, format: date-time }
+                files_deleted: { type: integer }
+                bytes_freed: { type: integer }
+                error: { type: string }
