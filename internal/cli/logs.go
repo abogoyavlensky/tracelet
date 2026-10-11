@@ -110,7 +110,7 @@ func runLogs(ctx context.Context, args []string, stdout, stderr io.Writer) error
 		if lvl == "" {
 			lvl = levelName(l.SeverityNumber)
 		}
-		fmt.Fprintf(tw, "%s\t%s\t%s\t%s\n", l.TS.UTC().Format("2006-01-02T15:04:05.000Z"), lvl, l.Service,
+		fmt.Fprintf(tw, "%s\t%s\t%s\t%s\n", l.TS.UTC().Format(tsFormat), lvl, l.Service,
 			strings.ReplaceAll(l.Body, "\n", `\n`))
 	}
 	if err := tw.Flush(); err != nil {
@@ -167,6 +167,7 @@ func runServices(ctx context.Context, args []string, stdout, stderr io.Writer) e
 		Items []struct {
 			Service string `json:"service"`
 			Logs    int64  `json:"logs"`
+			Spans   int64  `json:"spans"`
 		}
 	}
 	if err := json.Unmarshal(body, &list); err != nil {
@@ -174,7 +175,7 @@ func runServices(ctx context.Context, args []string, stdout, stderr io.Writer) e
 	}
 	tw := tabwriter.NewWriter(stdout, 0, 4, 2, ' ', 0)
 	for _, s := range list.Items {
-		fmt.Fprintf(tw, "%s\t%d\n", s.Service, s.Logs)
+		fmt.Fprintf(tw, "%s\t%d logs\t%d spans\n", s.Service, s.Logs, s.Spans)
 	}
 	return tw.Flush()
 }
