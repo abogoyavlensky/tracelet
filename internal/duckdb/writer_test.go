@@ -25,7 +25,8 @@ func sampleBatch(ts time.Time) telemetry.Batch {
 	for i := range 2 {
 		b.Spans = append(b.Spans, telemetry.Span{
 			TS: ts, EndTS: ts.Add(time.Millisecond), Project: "default", Service: "svc-01",
-			TraceID: "0123456789abcdef0123456789abcdef", SpanID: fmt.Sprintf("000000000000000%d", i),
+			// IDs unique per ts, so two sample batches are not duplicates.
+			TraceID: fmt.Sprintf("%032x", ts.UnixNano()), SpanID: fmt.Sprintf("%016x", ts.UnixNano()+int64(i)),
 			Name: "GET /", Kind: 2, DurationNS: int64(time.Millisecond),
 		})
 	}
@@ -63,6 +64,7 @@ func TestWriterWritesBatch(t *testing.T) {
 	require.NoError(t, err)
 
 	assert.Equal(t, 7, stats.Rows)
+	assert.Zero(t, stats.Duplicates)
 	assert.Positive(t, stats.Latency)
 	assert.Equal(t, 3, countRows(t, s, "logs"))
 	assert.Equal(t, 2, countRows(t, s, "spans"))
@@ -195,4 +197,112 @@ func TestWriterFailedBatchDoesNotLeak(t *testing.T) {
 	require.NoError(t, err)
 
 	assert.Equal(t, 1, countRows(t, s, "logs"))
+}
+
+func span(project, trace, id string, ts time.Time) telemetry.Span {
+	return telemetry.Span{
+		TS: ts, EndTS: ts.Add(time.Millisecond), Project: project, Service: "api",
+		TraceID: fmt.Sprintf("%032s", trace), SpanID: fmt.Sprintf("%016s", id),
+		Name: "op", DurationNS: int64(time.Millisecond),
+	}
+}
+
+func newWriter(t *testing.T) (*duckdb.Store, *duckdb.Writer) {
+	t.Helper()
+	s := openStore(t)
+	w, err := duckdb.NewWriter(t.Context(), s, time.Time{})
+	require.NoError(t, err)
+	t.Cleanup(func() { _ = w.Close() })
+	return s, w
+}
+
+func spanNames(t *testing.T, s *duckdb.Store) map[string]string {
+	t.Helper()
+	rows, err := s.DB().Query("SELECT project || '/' || trace_id || '/' || span_id, name FROM spans")
+	require.NoError(t, err)
+	defer rows.Close()
+	out := map[string]string{}
+	for rows.Next() {
+		var k, name string
+		require.NoError(t, rows.Scan(&k, &name))
+		out[k] = name
+	}
+	require.NoError(t, rows.Err())
+	return out
+}
+
+func TestWriterDropsDuplicateSpans(t *testing.T) {
+	s, w := newWriter(t)
+	ts := time.Now().UTC().Truncate(time.Microsecond)
+
+	first := []telemetry.Span{span("p1", "1", "1", ts), span("p1", "1", "2", ts), span("p1", "2", "3", ts)}
+	stats, err := w.Write(t.Context(), telemetry.Batch{Spans: first})
+	require.NoError(t, err)
+	assert.Equal(t, 3, stats.Rows)
+	assert.Zero(t, stats.Duplicates)
+
+	repeat := span("p1", "2", "5", ts)
+	again := repeat
+	again.Name = "second copy"
+	second := append(append([]telemetry.Span{}, first...), span("p1", "1", "4", ts), repeat, again)
+	stats, err = w.Write(t.Context(), telemetry.Batch{Spans: second})
+	require.NoError(t, err)
+	assert.Equal(t, 2, stats.Rows)
+	assert.Equal(t, 4, stats.Duplicates)
+
+	assert.Equal(t, 5, countRows(t, s, "spans"))
+	names := spanNames(t, s)
+	assert.Equal(t, "op", names["p1/"+repeat.TraceID+"/"+repeat.SpanID], "the first copy is kept")
+	assert.Len(t, second, 6, "the caller's batch is not mutated")
+}
+
+func TestWriterDedupIgnoresOtherHours(t *testing.T) {
+	s, w := newWriter(t)
+	ts := time.Now().UTC().Truncate(time.Hour).Add(-3 * time.Hour)
+
+	_, err := w.Write(t.Context(), telemetry.Batch{Spans: []telemetry.Span{span("p1", "1", "1", ts)}})
+	require.NoError(t, err)
+
+	// The repeat is two hours later, so the stored copy is only in range
+	// because the batch's other span widens it back to ts.
+	stats, err := w.Write(t.Context(), telemetry.Batch{Spans: []telemetry.Span{
+		span("p1", "1", "1", ts.Add(2*time.Hour)),
+		span("p1", "1", "2", ts),
+	}})
+	require.NoError(t, err)
+	assert.Equal(t, 1, stats.Rows)
+	assert.Equal(t, 1, stats.Duplicates)
+	assert.Equal(t, 2, countRows(t, s, "spans"))
+}
+
+func TestWriterDedupIsPerProject(t *testing.T) {
+	ts := time.Now().UTC().Truncate(time.Microsecond)
+
+	t.Run("within a batch", func(t *testing.T) {
+		s, w := newWriter(t)
+		stats, err := w.Write(t.Context(), telemetry.Batch{Spans: []telemetry.Span{
+			span("p1", "1", "1", ts), span("p2", "1", "1", ts),
+		}})
+		require.NoError(t, err)
+		assert.Equal(t, 2, stats.Rows)
+		assert.Zero(t, stats.Duplicates)
+		assert.Equal(t, 2, countRows(t, s, "spans"))
+	})
+
+	t.Run("across batches", func(t *testing.T) {
+		s, w := newWriter(t)
+		_, err := w.Write(t.Context(), telemetry.Batch{Spans: []telemetry.Span{span("p1", "1", "1", ts)}})
+		require.NoError(t, err)
+
+		stats, err := w.Write(t.Context(), telemetry.Batch{Spans: []telemetry.Span{span("p2", "1", "1", ts)}})
+		require.NoError(t, err)
+		assert.Equal(t, 1, stats.Rows)
+		assert.Zero(t, stats.Duplicates)
+
+		stats, err = w.Write(t.Context(), telemetry.Batch{Spans: []telemetry.Span{span("p2", "1", "1", ts)}})
+		require.NoError(t, err)
+		assert.Zero(t, stats.Rows)
+		assert.Equal(t, 1, stats.Duplicates)
+		assert.Equal(t, 2, countRows(t, s, "spans"))
+	})
 }

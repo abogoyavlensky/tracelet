@@ -6,6 +6,7 @@ import (
 	"database/sql/driver"
 	"errors"
 	"fmt"
+	"strings"
 	"time"
 
 	duckdbgo "github.com/duckdb/duckdb-go/v2"
@@ -15,8 +16,9 @@ import (
 
 // CommitStats describes one Write.
 type CommitStats struct {
-	Rows    int
-	Latency time.Duration // first append to commit
+	Rows       int           // rows appended
+	Duplicates int           // spans dropped as already stored or repeated
+	Latency    time.Duration // first append to commit
 }
 
 // Writer appends batches to the hot tables over one dedicated connection. It
@@ -86,6 +88,11 @@ func NewWriter(ctx context.Context, s *Store, floor time.Time) (*Writer, error) 
 // max(now, last + 1µs) and each next one a microsecond later, and commits the
 // batch in one transaction. The stamps on the caller's batch are left
 // untouched; rows are copied as they are appended.
+//
+// A span whose (project, trace_id, span_id) is already in the hot spans
+// table, or earlier in the batch, is dropped and counted as a duplicate: an
+// SDK retries a whole request when a response is lost after the commit. A
+// retry arriving after its hour was flushed is not caught.
 func (w *Writer) Write(ctx context.Context, batch telemetry.Batch) (CommitStats, error) {
 	if batch.Len() == 0 {
 		return CommitStats{}, nil
@@ -100,7 +107,16 @@ func (w *Writer) Write(ctx context.Context, batch telemetry.Batch) (CommitStats,
 	if _, err := w.conn.ExecContext(ctx, "BEGIN TRANSACTION"); err != nil {
 		return CommitStats{}, fmt.Errorf("begin: %w", err)
 	}
-	next, err := w.appendAll(batch, stamp)
+	var existing map[spanKey]bool
+	var err error
+	if len(batch.Spans) > 0 {
+		existing, err = w.existingSpanKeys(ctx, batch.Spans)
+	}
+	var next time.Time
+	var rows, dups int
+	if err == nil {
+		next, rows, dups, err = w.appendAll(batch, existing, stamp)
+	}
 	if err != nil {
 		// ROLLBACK does not touch the appenders' own buffers; without Clear the
 		// rejected rows would be flushed by the next Write.
@@ -114,15 +130,64 @@ func (w *Writer) Write(ctx context.Context, batch telemetry.Batch) (CommitStats,
 	}
 	w.last = next.Add(-time.Microsecond)
 
-	return CommitStats{Rows: batch.Len(), Latency: time.Since(start)}, nil
+	return CommitStats{Rows: rows, Duplicates: dups, Latency: time.Since(start)}, nil
 }
 
-// appendAll appends every row, stamping from stamp upwards, and returns the
-// stamp the next row would get.
-func (w *Writer) appendAll(batch telemetry.Batch, stamp time.Time) (time.Time, error) {
+// spanKey identifies a span. The project is part of it: one commit can hold
+// several projects' submissions, and the same IDs in two projects are two
+// spans.
+type spanKey struct{ project, trace, span string }
+
+const existingSpansSQL = `SELECT project, trace_id, span_id FROM spans WHERE ts >= ? AND ts <= ? AND trace_id IN (`
+
+// existingSpanKeys returns the keys of hot spans that share a trace ID with
+// spans and lie within their time span. It runs on the writer's connection
+// inside the open transaction, so it sees every earlier commit.
+func (w *Writer) existingSpanKeys(ctx context.Context, spans []telemetry.Span) (map[spanKey]bool, error) {
+	lo, hi := spans[0].TS, spans[0].TS
+	traces := map[string]bool{}
+	var args []any
+	for _, s := range spans {
+		if s.TS.Before(lo) {
+			lo = s.TS
+		}
+		if s.TS.After(hi) {
+			hi = s.TS
+		}
+		if !traces[s.TraceID] {
+			traces[s.TraceID] = true
+			args = append(args, s.TraceID)
+		}
+	}
+	q := existingSpansSQL + strings.Repeat("?, ", len(args)-1) + "?)"
+	rows, err := w.conn.QueryContext(ctx, q, append([]any{lo, hi}, args...)...)
+	if err != nil {
+		return nil, fmt.Errorf("find duplicate spans: %w", err)
+	}
+	defer rows.Close()
+	out := map[spanKey]bool{}
+	for rows.Next() {
+		var k spanKey
+		if err := rows.Scan(&k.project, &k.trace, &k.span); err != nil {
+			return nil, fmt.Errorf("find duplicate spans: %w", err)
+		}
+		out[k] = true
+	}
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("find duplicate spans: %w", err)
+	}
+	return out, nil
+}
+
+// appendAll appends every row but duplicate spans, stamping from stamp
+// upwards, and returns the stamp the next row would get, the rows appended,
+// and the spans skipped. existing is extended with the appended spans' keys.
+func (w *Writer) appendAll(batch telemetry.Batch, existing map[spanKey]bool, stamp time.Time) (time.Time, int, int, error) {
+	rows, dups := 0, 0
 	next := func() time.Time {
 		s := stamp
 		stamp = stamp.Add(time.Microsecond)
+		rows++
 		return s
 	}
 	for _, l := range batch.Logs {
@@ -134,10 +199,16 @@ func (w *Writer) appendAll(batch telemetry.Batch, stamp time.Time) (time.Time, e
 			nullString(l.Resource), nullString(l.Attributes),
 		)
 		if err != nil {
-			return time.Time{}, fmt.Errorf("append log: %w", err)
+			return time.Time{}, 0, 0, fmt.Errorf("append log: %w", err)
 		}
 	}
 	for _, s := range batch.Spans {
+		k := spanKey{s.Project, s.TraceID, s.SpanID}
+		if existing[k] {
+			dups++
+			continue
+		}
+		existing[k] = true
 		err := w.spans.AppendRow(
 			s.TS, s.EndTS, next(),
 			s.Project, s.Service, nullString(s.Environment), nullString(s.Version),
@@ -147,7 +218,7 @@ func (w *Writer) appendAll(batch telemetry.Batch, stamp time.Time) (time.Time, e
 			nullString(s.Resource), nullString(s.Attributes), nullString(s.Events), nullString(s.Links),
 		)
 		if err != nil {
-			return time.Time{}, fmt.Errorf("append span: %w", err)
+			return time.Time{}, 0, 0, fmt.Errorf("append span: %w", err)
 		}
 	}
 	for _, p := range batch.Points {
@@ -162,16 +233,16 @@ func (w *Writer) appendAll(batch telemetry.Batch, stamp time.Time) (time.Time, e
 			nullSlice(p.BucketCounts), nullSlice(p.BucketBounds),
 		)
 		if err != nil {
-			return time.Time{}, fmt.Errorf("append metric point: %w", err)
+			return time.Time{}, 0, 0, fmt.Errorf("append metric point: %w", err)
 		}
 	}
 
 	for _, a := range []*duckdbgo.Appender{w.logs, w.spans, w.points} {
 		if err := a.Flush(); err != nil {
-			return time.Time{}, fmt.Errorf("flush appender: %w", err)
+			return time.Time{}, 0, 0, fmt.Errorf("flush appender: %w", err)
 		}
 	}
-	return stamp, nil
+	return stamp, rows, dups, nil
 }
 
 func (w *Writer) clear() {
