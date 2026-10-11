@@ -93,6 +93,8 @@ func NewHandler(deps Deps) *API {
 	a.handle("DELETE /api/v1/tokens/{id}", h.requireScope(project.ScopeAdmin, h.revokeToken))
 	a.handle("GET /api/v1/logs", h.requireScope(project.ScopeRead, h.searchLogs))
 	a.handle("GET /api/v1/services", h.requireScope(project.ScopeRead, h.services))
+	a.handle("GET /api/v1/traces/{trace_id}", h.requireScope(project.ScopeRead, h.getTrace))
+	a.handle("GET /api/v1/spans", h.requireScope(project.ScopeRead, h.searchSpans))
 	a.handle("POST /v1/logs", h.requireScope(project.ScopeIngest, h.otlpLogs))
 	a.handle("POST /v1/traces", h.requireScope(project.ScopeIngest, h.otlpTraces))
 	// Unknown paths under the API prefixes are JSON 404s, not the frontend.
