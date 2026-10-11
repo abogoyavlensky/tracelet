@@ -194,17 +194,17 @@ The only Go change is the `serve` split. `rite check`, now including `check-cli`
 **Files:**
 - Create: `.github/workflows/release.yml`
 
-- [ ] **Step 1: Write it**
+- [x] **Step 1: Write it**
   Follow design decision 5. Set `env: IMAGE: ghcr.io/abogoyavlensky/tracelet`. Use `concurrency: release-${{ github.ref }}` with `cancel-in-progress: false`. The version check step, run on a tag push only:
   ```sh
   test "$(bin/tracelet version)" = "$GITHUB_REF_NAME"
   ```
   The `publish` job's version and minor: `version="${GITHUB_REF_NAME#v}"; minor="${version%.*}"`. Comment the non-obvious steps as pagelet's file does.
 
-- [ ] **Step 2: Lint**
+- [x] **Step 2: Lint**
   Run actionlint as in Task 3. Expected: no errors.
 
-- [ ] **Step 3: Commit**
+- [x] **Step 3: Commit**
   `git commit -m "Publish the image and Linux binaries on a version tag"`
 
 ### Task 5: Deploy to uncloud
