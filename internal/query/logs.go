@@ -3,94 +3,10 @@ package query
 import (
 	"context"
 	"database/sql"
-	"encoding/base64"
 	"encoding/json"
 	"fmt"
 	"strings"
 	"time"
-)
-
-// ValidationError reports a bad query parameter; its message is safe to show
-// to the client.
-type ValidationError struct {
-	Message string
-}
-
-func (e *ValidationError) Error() string { return e.Message }
-
-func invalid(format string, args ...any) error {
-	return &ValidationError{Message: fmt.Sprintf(format, args...)}
-}
-
-// Range is the half-open time range [From, To).
-type Range struct {
-	From time.Time `json:"from"`
-	To   time.Time `json:"to"`
-}
-
-// DefaultLast is the range a search covers when it names none.
-const DefaultLast = time.Hour
-
-// ResolveRange turns the request's time parameters into an absolute range.
-// last, when positive, is the range ending at now and excludes from and to;
-// a lone from ends at now; a lone to starts DefaultLast before it; nothing at
-// all is the last DefaultLast.
-func ResolveRange(from, to time.Time, last time.Duration, now time.Time) (Range, error) {
-	now = now.UTC()
-	switch {
-	case last < 0:
-		return Range{}, invalid("last must be positive")
-	case last > 0 && (!from.IsZero() || !to.IsZero()):
-		return Range{}, invalid("last cannot be combined with from or to")
-	case last > 0:
-		return Range{From: now.Add(-last), To: now}, nil
-	}
-	if to.IsZero() {
-		to = now
-	}
-	if from.IsZero() {
-		from = to.Add(-DefaultLast)
-	}
-	if !from.Before(to) {
-		return Range{}, invalid("from must be before to")
-	}
-	return Range{From: from.UTC(), To: to.UTC()}, nil
-}
-
-// Severity floors of the OTLP severity number ranges, by level name.
-var severityFloors = map[string]int16{
-	"trace": 1, "debug": 5, "info": 9, "warn": 13, "error": 17, "fatal": 21,
-}
-
-// ParseLevel returns the lowest severity number of a level name: "error" is
-// 17, so a minimum level of error matches 17 and above.
-func ParseLevel(name string) (int16, error) {
-	n, ok := severityFloors[strings.ToLower(name)]
-	if !ok {
-		return 0, invalid("level must be one of trace, debug, info, warn, error, fatal")
-	}
-	return n, nil
-}
-
-// Attr is an exact-match filter on a top-level attribute.
-type Attr struct {
-	Key, Value string
-}
-
-// ParseAttr reads "key:value". The key is everything before the first colon,
-// so values may contain colons.
-func ParseAttr(s string) (Attr, error) {
-	k, v, ok := strings.Cut(s, ":")
-	if !ok || k == "" {
-		return Attr{}, invalid("attr must be key:value")
-	}
-	return Attr{Key: k, Value: v}, nil
-}
-
-// Search limits.
-const (
-	DefaultLimit = 100
-	MaxLimit     = 1000
 )
 
 // LogsParams is one logs search. Exactly one of Range and Cursor positions
@@ -107,34 +23,6 @@ type LogsParams struct {
 	Range       Range
 	Limit       int // 0 is DefaultLimit
 	Cursor      string
-}
-
-// position is a cursor: the last item's row key and the page's range.
-type position struct {
-	TS       time.Time `json:"ts"`
-	IngestTS time.Time `json:"ingest_ts"`
-	From     time.Time `json:"from"`
-	To       time.Time `json:"to"`
-}
-
-func encodeCursor(p position) string {
-	b, err := json.Marshal(p)
-	if err != nil {
-		panic(fmt.Sprintf("encode cursor: %v", err)) // times always marshal
-	}
-	return base64.RawURLEncoding.EncodeToString(b)
-}
-
-func decodeCursor(s string) (position, error) {
-	var p position
-	b, err := base64.RawURLEncoding.DecodeString(s)
-	if err != nil {
-		return p, invalid("invalid cursor")
-	}
-	if err := json.Unmarshal(b, &p); err != nil || p.TS.IsZero() || !p.From.Before(p.To) {
-		return p, invalid("invalid cursor")
-	}
-	return p, nil
 }
 
 // Log is one search result. Resource and Attributes are JSON objects, or nil.
@@ -197,40 +85,36 @@ func LogsSearch(ctx context.Context, snap *Snapshot, p LogsParams) (LogsPage, er
 		return LogsPage{}, invalid("from must be before to")
 	}
 
-	where := []string{"project = ?"}
-	args := []any{p.ProjectID}
-	add := func(cond string, a ...any) {
-		where = append(where, cond)
-		args = append(args, a...)
-	}
+	var f filter
+	f.add("project = ?", p.ProjectID)
 	if p.Service != "" {
-		add("service = ?", p.Service)
+		f.add("service = ?", p.Service)
 	}
 	if p.Environment != "" {
-		add("environment = ?", p.Environment)
+		f.add("environment = ?", p.Environment)
 	}
 	if p.MinSeverity > 0 {
-		add("severity_number >= ?", p.MinSeverity)
+		f.add("severity_number >= ?", p.MinSeverity)
 	}
 	if p.Query != "" {
-		add("contains(lower(body), lower(?))", p.Query)
+		f.add("contains(lower(body), lower(?))", p.Query)
 	}
 	if p.TraceID != "" {
-		add("trace_id = ?", strings.ToLower(p.TraceID))
+		f.add("trace_id = ?", strings.ToLower(p.TraceID))
 	}
 	for _, a := range p.Attrs {
-		add("json_extract_string(attributes, ?) = ?", attrPath(a.Key), a.Value)
+		f.add("json_extract_string(attributes, ?) = ?", attrPath(a.Key), a.Value)
 	}
 	if after != nil {
-		add("(ts < ? OR (ts = ? AND ingest_ts < ?))", after.TS, after.TS, after.IngestTS)
+		f.add("(ts < ? OR (ts = ? AND ingest_ts < ?))", after.TS, after.TS, after.IngestTS)
 	}
 
 	src, srcArgs, err := snap.Source(ctx, "logs", rng.From, rng.To)
 	if err != nil {
 		return LogsPage{}, err
 	}
-	q := fmt.Sprintf(logsSelect, src, strings.Join(where, " AND "))
-	all := append(append(srcArgs, args...), limit+1)
+	q := fmt.Sprintf(logsSelect, src, f.clause())
+	all := append(append(srcArgs, f.args...), limit+1)
 	rows, err := snap.QueryContext(ctx, q, all...)
 	if err != nil {
 		return LogsPage{}, fmt.Errorf("search logs: %w", err)
@@ -256,14 +140,6 @@ func LogsSearch(ctx context.Context, snap *Snapshot, p LogsParams) (LogsPage, er
 		return LogsPage{}, fmt.Errorf("search logs: %w", err)
 	}
 	return page, nil
-}
-
-// attrPath is the JSON path of a top-level key, quoted so a dotted OTLP name
-// such as exception.type matches the key rather than a nested path.
-func attrPath(key string) string {
-	key = strings.ReplaceAll(key, `\`, `\\`)
-	key = strings.ReplaceAll(key, `"`, `\"`)
-	return `$."` + key + `"`
 }
 
 func scanLog(rows *sql.Rows) (Log, time.Time, error) {
@@ -293,25 +169,36 @@ func scanLog(rows *sql.Rows) (Log, time.Time, error) {
 	return l, ingestTS, nil
 }
 
-// ServiceCount is one service's log count in a range.
+// ServiceCount is one service's log and span counts in a range.
 type ServiceCount struct {
 	Service string `json:"service"`
 	Logs    int64  `json:"logs"`
+	Spans   int64  `json:"spans"`
 }
 
-const servicesSQL = `SELECT service, count(*) AS n FROM %s WHERE project = ? GROUP BY service ORDER BY n DESC, service`
+const servicesSQL = `SELECT service, sum(logs) AS logs, sum(spans) AS spans FROM (
+  SELECT service, count(*) AS logs, 0 AS spans FROM %s WHERE project = ? GROUP BY service
+  UNION ALL
+  SELECT service, 0, count(*) FROM %s WHERE project = ? GROUP BY service
+) GROUP BY service ORDER BY sum(logs) + sum(spans) DESC, service`
 
-// Services returns the distinct services with logs in a project and range,
-// busiest first.
+// Services returns the distinct services with logs or spans in a project and
+// range, busiest first by the two counts together.
 func Services(ctx context.Context, snap *Snapshot, projectID string, rng Range) ([]ServiceCount, error) {
 	if !rng.From.Before(rng.To) {
 		return nil, invalid("from must be before to")
 	}
-	src, args, err := snap.Source(ctx, "logs", rng.From, rng.To)
+	logs, logArgs, err := snap.Source(ctx, "logs", rng.From, rng.To)
 	if err != nil {
 		return nil, err
 	}
-	rows, err := snap.QueryContext(ctx, fmt.Sprintf(servicesSQL, src), append(args, projectID)...)
+	spans, spanArgs, err := snap.Source(ctx, "spans", rng.From, rng.To)
+	if err != nil {
+		return nil, err
+	}
+	args := append(append(logArgs, projectID), spanArgs...)
+	args = append(args, projectID)
+	rows, err := snap.QueryContext(ctx, fmt.Sprintf(servicesSQL, logs, spans), args...)
 	if err != nil {
 		return nil, fmt.Errorf("services: %w", err)
 	}
@@ -320,7 +207,7 @@ func Services(ctx context.Context, snap *Snapshot, projectID string, rng Range) 
 	out := []ServiceCount{}
 	for rows.Next() {
 		var c ServiceCount
-		if err := rows.Scan(&c.Service, &c.Logs); err != nil {
+		if err := rows.Scan(&c.Service, &c.Logs, &c.Spans); err != nil {
 			return nil, fmt.Errorf("scan service: %w", err)
 		}
 		out = append(out, c)

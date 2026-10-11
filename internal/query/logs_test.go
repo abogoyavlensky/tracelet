@@ -138,7 +138,7 @@ func TestLogsSearchPagination(t *testing.T) {
 func TestLogsSearchCursorKeepsRange(t *testing.T) {
 	e := searchEnv(t)
 	now := h1.Add(45 * time.Minute)
-	rng, err := query.ResolveRange(time.Time{}, time.Time{}, time.Hour, now)
+	rng, err := query.ResolveRange(time.Time{}, time.Time{}, time.Hour, query.DefaultLast, now)
 	require.NoError(t, err)
 	first := search(t, e, query.LogsParams{Range: rng, Limit: 1})
 	require.NotEmpty(t, first.NextCursor)
@@ -180,20 +180,23 @@ func TestServices(t *testing.T) {
 	e := searchEnv(t)
 	got, err := query.Services(t.Context(), e.open(t), "p1", query.Range{From: h0, To: h2})
 	require.NoError(t, err)
-	assert.Equal(t, []query.ServiceCount{{Service: "api", Logs: 4}, {Service: "worker", Logs: 1}}, got)
+	assert.Equal(t, []query.ServiceCount{{Service: "api", Logs: 4}, {Service: "worker", Logs: 1}}, got, "no spans counts zero")
 }
 
 func TestResolveRangeAndParsers(t *testing.T) {
 	now := h2
-	r, err := query.ResolveRange(time.Time{}, time.Time{}, 0, now)
+	r, err := query.ResolveRange(time.Time{}, time.Time{}, 0, query.DefaultLast, now)
 	require.NoError(t, err)
 	assert.Equal(t, query.Range{From: h1, To: h2}, r, "default is the last hour")
-	r, err = query.ResolveRange(h0, time.Time{}, 0, now)
+	r, err = query.ResolveRange(time.Time{}, time.Time{}, 0, query.DefaultTraceLast, now)
+	require.NoError(t, err)
+	assert.Equal(t, query.Range{From: now.Add(-7 * 24 * time.Hour), To: now}, r, "the caller picks the default")
+	r, err = query.ResolveRange(h0, time.Time{}, 0, query.DefaultLast, now)
 	require.NoError(t, err)
 	assert.Equal(t, query.Range{From: h0, To: h2}, r)
-	_, err = query.ResolveRange(h0, time.Time{}, time.Hour, now)
+	_, err = query.ResolveRange(h0, time.Time{}, time.Hour, query.DefaultLast, now)
 	require.Error(t, err)
-	_, err = query.ResolveRange(h1, h0, 0, now)
+	_, err = query.ResolveRange(h1, h0, 0, query.DefaultLast, now)
 	require.Error(t, err)
 
 	n, err := query.ParseLevel("ERROR")

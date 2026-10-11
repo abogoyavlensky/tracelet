@@ -171,7 +171,7 @@ func (h *Handler) parseRange(q url.Values) (query.Range, error) {
 			return query.Range{}, &query.ValidationError{Message: "last must be a positive duration such as 30m or 2h"}
 		}
 	}
-	return query.ResolveRange(from, to, last, h.now())
+	return query.ResolveRange(from, to, last, query.DefaultLast, h.now())
 }
 
 // queryError maps query failures: bad parameters are 400, running out of
