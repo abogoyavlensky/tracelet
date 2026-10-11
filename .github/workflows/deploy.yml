@@ -1,0 +1,87 @@
+name: deploy
+
+# Every push to master is tested, then deployed to the personal uncloud
+# cluster. Setup and the variables and secrets it needs: docs/operations.md.
+on:
+  push:
+    branches: [master]
+
+# Two master pushes deploy one after the other, never at once; a deploy
+# that started is never cancelled halfway.
+concurrency:
+  group: deploy-personal
+  cancel-in-progress: false
+
+permissions:
+  contents: read
+
+jobs:
+  # Tests both architectures and uploads the bin/tracelet each one built.
+  test:
+    uses: ./.github/workflows/ci.yml
+
+  deploy:
+    # Pinned like ci.yml: the image needs a binary linked against a glibc no
+    # newer than trixie's 2.41.
+    runs-on: ubuntu-24.04
+    needs: [test]
+    permissions:
+      contents: read
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v7
+
+      - uses: webfactory/ssh-agent@v0.10.0
+        with:
+          ssh-private-key: ${{ secrets.SSH_PRIVATE_KEY }}
+
+      # uc at the version in .mise.toml.
+      - uses: jdx/mise-action@v5
+
+      # The image is a copy of this binary, built by ci.yml on ubuntu-24.04
+      # (glibc 2.39, which the trixie image satisfies) and tested there;
+      # nothing built on a newer laptop ever ships.
+      - uses: actions/download-artifact@v8
+        with:
+          name: tracelet-linux-amd64
+          path: bin
+
+      # Artifacts lose the executable bit.
+      - run: chmod +x bin/tracelet
+
+      # The default docker driver can't export cache (type=gha); this sets up
+      # a docker-container builder that can.
+      - name: Setup Docker Buildx
+        uses: docker/setup-buildx-action@v4
+
+      # Exposes ACTIONS_RUNTIME_TOKEN/ACTIONS_CACHE_URL to the `uc` run step
+      # so the gha cache backend can authenticate.
+      - name: Expose GitHub Runtime for cache
+        uses: crazy-max/ghaction-github-runtime@v4
+
+      # A missing variable or secret fails here, loudly: compose.yaml refuses
+      # to load without APP_DOMAIN, and the guard below stops an empty
+      # ADMIN_TOKEN (printenv would pass it on, and the server would deploy
+      # with a token of its own making).
+      - name: Build and deploy
+        env:
+          APP_DOMAIN: ${{ vars.APP_DOMAIN }}
+          ADMIN_TOKEN: ${{ secrets.ADMIN_TOKEN }}
+        run: |
+          : "${ADMIN_TOKEN:?the ADMIN_TOKEN secret must be set}"
+          uc --context personal --connect root@${{ vars.SERVER_IP }} deploy -f compose.yaml --yes tracelet
+
+      # A version match proves the new container is the one answering, not
+      # just that something answers. The first deploy waits here for Caddy to
+      # get the certificate; later ones for the stop-first restart. About two
+      # minutes before giving up.
+      - name: Check the deployed version
+        env:
+          APP_DOMAIN: ${{ vars.APP_DOMAIN }}
+        run: |
+          want="$(bin/tracelet version)"
+          for _ in $(seq 60); do
+            got="$(curl -fsS --connect-timeout 5 --max-time 10 "https://$APP_DOMAIN/api/v1/health" | jq -r .version)" && [ "$got" = "$want" ] && exit 0
+            sleep 2
+          done
+          echo "health at https://$APP_DOMAIN never reported $want (last: ${got:-no answer})"; exit 1

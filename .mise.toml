@@ -3,6 +3,9 @@ go = "1.27"
 node = "24"
 golangci-lint = "2.14.0"
 rite = "0.2.0"
+# Deploys compose.yaml to the uncloud cluster (CI; see deploy.yml).
+uc = "0.20.0"
 
 [tool_alias]
 rite = "github:abogoyavlensky/rite"
+uc = "github:psviderski/uncloud"

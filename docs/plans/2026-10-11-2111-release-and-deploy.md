@@ -213,17 +213,17 @@ The only Go change is the `serve` split. `rite check`, now including `check-cli`
 - Create: `compose.yaml`, `.github/workflows/deploy.yml`
 - Modify: `.mise.toml`
 
-- [ ] **Step 1: Add `uc` to `.mise.toml`**
+- [x] **Step 1: Add `uc` to `.mise.toml`**
   Under `[tools]`, add `uc = "0.20.0"` with a comment saying it deploys `compose.yaml` to the uncloud cluster (CI; see `deploy.yml`). Add the alias under `[tool_alias]`. Run `mise install` and `uc --version`. Expected: `0.20.0`.
 
-- [ ] **Step 2: Write `compose.yaml`**
+- [x] **Step 2: Write `compose.yaml`**
   Follow design decision 6. Add a header comment that says how it deploys, plus a comment on each non-default setting (stop-first, grace period, memory, secret).
 
-- [ ] **Step 3: Check `compose.yaml` offline with uncloud's loader**
+- [x] **Step 3: Check `compose.yaml` offline with uncloud's loader**
   `uc deploy` has no dry run. Clone uncloud v0.20.0 into `.tmp/uncloud` (`git clone --depth 1 --branch v0.20.0 https://github.com/psviderski/uncloud .tmp/uncloud`). Add a scratch test under `pkg/client/compose/` that calls `LoadProject` on `../../../../compose.yaml` (or an absolute path), then `ServiceSpecFromCompose` and `spec.Validate()`, and prints the spec as JSON. Run it with `APP_DOMAIN=tracelet.example.com ADMIN_TOKEN=tl_0123456789abcdef0123` (`go test ./pkg/client/compose/ -run <Name> -v`).
   Expected: `UpdateConfig.Order: stop-first`, a bind volume `/root/tracelet-data` at `/app/data`, memory 256 MiB and reservation 128 MiB, `TRACELET_DUCKDB_MEMORY_LIMIT=128MB`, stop grace 30 s, the port published as HTTPS on `tracelet.example.com` to container port 8080, and `TRACELET_ADMIN_TOKEN` from the secret. Then run it with `APP_DOMAIN` unset. Expected: loading fails with "required variable APP_DOMAIN is missing a value". Adapt the function names to v0.20.0's actual API if they differ. If the loader cannot be driven this way within a reasonable effort, record that and rely on the first deploy. Delete `.tmp/uncloud` afterwards; `.tmp/` is gitignored either way.
 
-- [ ] **Step 4: Write `deploy.yml`**
+- [x] **Step 4: Write `deploy.yml`**
   Follow design decision 6. The version check step:
   ```sh
   want="$(bin/tracelet version)"
@@ -235,11 +235,15 @@ The only Go change is the `serve` split. `rite check`, now including `check-cli`
   ```
   `APP_DOMAIN` comes from `vars.APP_DOMAIN` in the step's `env`.
 
-- [ ] **Step 5: Lint**
+- [x] **Step 5: Lint**
   Run actionlint as in Task 3. Expected: no errors.
 
-- [ ] **Step 6: Commit**
+- [x] **Step 6: Commit**
   `git commit -m "Deploy master to the personal uncloud cluster"`
+
+> Deviation: uc 0.20.0 has no `--version` flag; `uc version` prints 0.20.0.
+> Deviation: the offline loader check needed `GOTMPDIR` off the quota-limited `/tmp` tmpfs. Results matched every expectation; unset `APP_DOMAIN` fails with "required variable APP_DOMAIN is missing a value".
+> Deviation: the version-check loop uses `_` instead of `i` (actionlint's shellcheck flags the unused variable). The deploy step gained an `ADMIN_TOKEN` guard (`: "${ADMIN_TOKEN:?…}"`), because `printenv` exits 0 on an empty secret and the server would deploy with a token of its own making.
 
 ### Task 6: Documentation
 
