@@ -553,8 +553,9 @@ components:
         One trace's spans. `start`, `end`, `duration_ns`, and `services`
         describe the returned spans, which is the whole trace unless
         `truncated` is true; then the later part of the trace is missing
-        from them too. Pass `start` and `end` as the range of a logs search
-        with `trace_id` to find the trace's logs.
+        from them too. To find the trace's logs, search logs with `trace_id`
+        from `start` to a little past `end`, since `to` is exclusive (and
+        equals `start` for a single span without an end time).
       required: [trace_id, start, end, duration_ns, services, spans, range, truncated]
       properties:
         trace_id: { type: string }
