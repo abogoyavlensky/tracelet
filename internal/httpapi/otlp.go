@@ -56,7 +56,7 @@ func (h *Handler) otlpLogs(w http.ResponseWriter, r *http.Request) {
 		writeError(w, status, msg)
 		return
 	}
-	req, err := otlp.Decode(body)
+	req, err := otlp.DecodeLogs(body)
 	if err != nil {
 		writeError(w, http.StatusBadRequest, "malformed OTLP logs request")
 		return
