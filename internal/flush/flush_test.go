@@ -2,8 +2,6 @@ package flush_test
 
 import (
 	"errors"
-	"fmt"
-	"math/rand/v2"
 	"os"
 	"path/filepath"
 	"regexp"
@@ -321,59 +319,4 @@ func TestReconcileReportsRepairs(t *testing.T) {
 	require.Len(t, files, 1)
 	assert.Equal(t, h0, files[0].Hour)
 	assert.Equal(t, "logs", files[0].Signal)
-}
-
-func TestSpanFilesAreTraceOrdered(t *testing.T) {
-	t.Parallel()
-	e := newEnv(t)
-	rng := rand.New(rand.NewPCG(1, 2))
-	const n = 25000
-	var batch telemetry.Batch
-	for i := range n {
-		ts := h0.Add(time.Duration(i) * 100 * time.Millisecond)
-		batch.Spans = append(batch.Spans, telemetry.Span{
-			TS: ts, EndTS: ts.Add(time.Millisecond), Project: "p1", Service: "api",
-			TraceID: fmt.Sprintf("%016x%016x", rng.Uint64(), rng.Uint64()), SpanID: fmt.Sprintf("%016x", i+1),
-			Name: "GET /", Kind: 2, DurationNS: int64(time.Millisecond),
-		})
-		if len(batch.Spans) == 2000 || i == n-1 {
-			e.write(t, batch, counts{})
-			batch = telemetry.Batch{}
-		}
-	}
-	_, minTS, maxTS, _ := hotStats(t, e, "spans", h0, h1)
-
-	_, err := e.Flusher.FlushDue(t.Context(), h2)
-	require.NoError(t, err)
-
-	files, err := e.Manifest.All(t.Context())
-	require.NoError(t, err)
-	require.Len(t, files, 1)
-	f := files[0]
-	assert.Equal(t, int64(n), f.Rows)
-	assert.Equal(t, minTS, f.MinTS)
-	assert.Equal(t, maxTS, f.MaxTS)
-	path := filepath.Join(e.DataDir, f.Path)
-
-	var groups int
-	err = e.Store.DB().QueryRow("SELECT count(DISTINCT row_group_id) FROM parquet_metadata(?)", path).Scan(&groups)
-	require.NoError(t, err)
-	assert.GreaterOrEqual(t, groups, 3)
-
-	// The store does not preserve insertion order, so a plain scan may
-	// return row groups in any order; file_row_number is the file's order.
-	rows, err := e.Store.DB().Query("SELECT trace_id FROM read_parquet(?, file_row_number = true) ORDER BY file_row_number", path)
-	require.NoError(t, err)
-	defer rows.Close()
-	var prev string
-	var seen int
-	for rows.Next() {
-		var id string
-		require.NoError(t, rows.Scan(&id))
-		require.GreaterOrEqual(t, id, prev, "trace IDs out of order at row %d", seen)
-		prev = id
-		seen++
-	}
-	require.NoError(t, rows.Err())
-	assert.Equal(t, n, seen)
 }

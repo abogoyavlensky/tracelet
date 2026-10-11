@@ -245,8 +245,9 @@ type Trace struct {
 }
 
 // TraceGet returns a project's spans of one trace within the range, oldest
-// first by (ts, ingest_ts). Span files are sorted by trace ID in small row
-// groups, so each file contributes at most one row group to the lookup.
+// first by (ts, ingest_ts). It scans the trace_id column of every span file
+// in the range, which measured 151 ms p95 over seven days of busy-workload
+// files (docs/spikes/trace-lookup.md).
 func TraceGet(ctx context.Context, snap *Snapshot, p TraceParams) (Trace, error) {
 	traceID, err := ParseTraceID(p.TraceID)
 	if err != nil {

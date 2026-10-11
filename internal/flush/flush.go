@@ -291,21 +291,10 @@ func (f *Flusher) export(ctx context.Context, signal string, hour time.Time, tmp
 	return cutoff.Time.UTC(), true, nil
 }
 
-// SpanRowGroupSize is the row group size of span files. Span files are
-// sorted by trace ID, so each row group covers a disjoint range of IDs and a
-// trace lookup reads at most one per file: this is the trace index (see
-// "Trace lookup by ID" in docs/DESIGN.md).
-const SpanRowGroupSize = 10000
-
 // copyStatement is the COPY that writes one hour's rows up to cutoff to tmp.
-// Spans are ordered by trace ID in small row groups; everything else by time.
 func copyStatement(signal string, hour, cutoff time.Time, tmp string) string {
-	order, options := "ts", ""
-	if signal == "spans" {
-		order, options = "trace_id, ts", fmt.Sprintf(", ROW_GROUP_SIZE %d", SpanRowGroupSize)
-	}
-	return fmt.Sprintf("COPY (SELECT * FROM %s WHERE ts >= %s AND ts < %s AND ingest_ts <= %s ORDER BY %s) TO %s (FORMAT parquet, COMPRESSION zstd%s)",
-		signal, tsLiteral(hour), tsLiteral(hour.Add(time.Hour)), tsLiteral(cutoff), order, quote(tmp), options)
+	return fmt.Sprintf("COPY (SELECT * FROM %s WHERE ts >= %s AND ts < %s AND ingest_ts <= %s ORDER BY ts) TO %s (FORMAT parquet, COMPRESSION zstd)",
+		signal, tsLiteral(hour), tsLiteral(hour.Add(time.Hour)), tsLiteral(cutoff), quote(tmp))
 }
 
 func deleteHot(ctx context.Context, db *sql.DB, signal string, hour, cutoff time.Time) (int64, error) {

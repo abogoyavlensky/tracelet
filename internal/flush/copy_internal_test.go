@@ -13,9 +13,4 @@ func TestCopyStatement(t *testing.T) {
 	want := "COPY (SELECT * FROM logs WHERE ts >= TIMESTAMP '2026-10-01 03:00:00' AND ts < TIMESTAMP '2026-10-01 04:00:00'" +
 		" AND ingest_ts <= TIMESTAMP '2026-10-01 04:30:00' ORDER BY ts) TO '/d/x.tmp' (FORMAT parquet, COMPRESSION zstd)"
 	assert.Equal(t, want, copyStatement("logs", hour, cutoff, "/d/x.tmp"))
-
-	want = "COPY (SELECT * FROM spans WHERE ts >= TIMESTAMP '2026-10-01 03:00:00' AND ts < TIMESTAMP '2026-10-01 04:00:00'" +
-		" AND ingest_ts <= TIMESTAMP '2026-10-01 04:30:00' ORDER BY trace_id, ts) TO '/d/x.tmp'" +
-		" (FORMAT parquet, COMPRESSION zstd, ROW_GROUP_SIZE 10000)"
-	assert.Equal(t, want, copyStatement("spans", hour, cutoff, "/d/x.tmp"))
 }
