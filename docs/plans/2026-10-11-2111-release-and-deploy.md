@@ -136,18 +136,18 @@ The only Go change is the `serve` split. `rite check`, now including `check-cli`
 - Create: `Dockerfile`, `.dockerignore`, `scripts/docker-smoke.sh`
 - Modify: `rite.edn`
 
-- [ ] **Step 1: Write the Dockerfile, `.dockerignore`, and smoke script**
+- [x] **Step 1: Write the Dockerfile, `.dockerignore`, and smoke script**
   Follow design decisions 3 and 4. Start the Dockerfile with a comment block in pagelet's style. It should explain why the binary is built outside the image, why the base is glibc and not Alpine, why trixie, and that a dev-box binary will not start in it. `chmod +x scripts/docker-smoke.sh`. The container name is `tracelet-smoke`.
 
-- [ ] **Step 2: Add the `rite docker` task**
+- [x] **Step 2: Add the `rite docker` task**
   `docker {:doc "Build the image around bin/tracelet and check its health (needs a binary built on glibc 2.41 or older, as CI builds)" :depends [build] :do {:sh "scripts/docker-smoke.sh"}}`, placed after `build`.
 
-- [ ] **Step 3: Check what can be checked locally**
+- [x] **Step 3: Check what can be checked locally**
   Run: `rite build && docker build -t tracelet:local . && docker run --rm tracelet:local version`
   Expected: the image builds. On this dev box (glibc 2.43) `version` fails with `GLIBC_2.4x not found`. That failure confirms the documented limit and is not a bug. If Docker is unavailable, say so and rely on CI.
   Then run: `rite check`. Expected: PASS (no Go or web change).
 
-- [ ] **Step 4: Commit**
+- [x] **Step 4: Commit**
   `git commit -m "Add the Docker image and its smoke test"`
 
 ### Task 2: The CLI-only build

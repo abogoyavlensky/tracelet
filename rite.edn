@@ -26,6 +26,10 @@
                :depends [web-build]
                :do {:sh "go build -trimpath -ldflags \"-s -w -X main.version=$(git describe --tags --always --dirty)\" -o bin/tracelet ./cmd/tracelet"}}
 
+  docker      {:doc "Build the image around bin/tracelet and check its health (needs a binary built on glibc 2.41 or older, as CI builds)"
+               :depends [build]
+               :do {:sh "scripts/docker-smoke.sh"}}
+
   dev         {:doc "Run the server from source on :8080 (serves the last frontend build)"
                :do {:sh "go run ./cmd/tracelet serve --data-dir ./data"}}
 
