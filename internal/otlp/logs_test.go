@@ -57,7 +57,7 @@ func TestDecodeAndConvertFullRecord(t *testing.T) {
 	body, err := proto.Marshal(req)
 	require.NoError(t, err)
 
-	decoded, err := otlp.Decode(body)
+	decoded, err := otlp.DecodeLogs(body)
 	require.NoError(t, err)
 	c := otlp.ConvertLogs(decoded, "p1")
 
@@ -136,7 +136,7 @@ func TestConvertAnyValues(t *testing.T) {
 }
 
 func TestDecodeMalformed(t *testing.T) {
-	_, err := otlp.Decode([]byte{0xff, 0xff, 0xff})
+	_, err := otlp.DecodeLogs([]byte{0xff, 0xff, 0xff})
 	require.Error(t, err)
 }
 

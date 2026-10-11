@@ -15,6 +15,7 @@ import (
 	commonpb "go.opentelemetry.io/proto/otlp/common/v1"
 	logspb "go.opentelemetry.io/proto/otlp/logs/v1"
 	resourcepb "go.opentelemetry.io/proto/otlp/resource/v1"
+	tracepb "go.opentelemetry.io/proto/otlp/trace/v1"
 	"google.golang.org/protobuf/proto"
 
 	"github.com/abogoyavlensky/tracelet/internal/httpapi"
@@ -72,7 +73,11 @@ func record() *logspb.LogRecord {
 }
 
 func postLogs(h http.Handler, token, contentType, encoding string, body []byte) *httptest.ResponseRecorder {
-	req := httptest.NewRequest(http.MethodPost, "/v1/logs", bytes.NewReader(body))
+	return postOTLP(h, "/v1/logs", token, contentType, encoding, body)
+}
+
+func postOTLP(h http.Handler, path, token, contentType, encoding string, body []byte) *httptest.ResponseRecorder {
+	req := httptest.NewRequest(http.MethodPost, path, bytes.NewReader(body))
 	req.Header.Set("Authorization", "Bearer "+token)
 	req.Header.Set("Content-Type", contentType)
 	if encoding != "" {
@@ -190,4 +195,93 @@ func TestOTLPLogsPartialSuccess(t *testing.T) {
 	assert.Equal(t, int64(1), ing.rejected)
 	require.Len(t, ing.batches, 1)
 	assert.Len(t, ing.batches[0].Logs, 1)
+}
+
+func tracesBody(t *testing.T, spans ...*tracepb.Span) []byte {
+	t.Helper()
+	b, err := proto.Marshal(&tracepb.TracesData{ResourceSpans: []*tracepb.ResourceSpans{{
+		Resource: &resourcepb.Resource{Attributes: []*commonpb.KeyValue{{
+			Key: "service.name", Value: &commonpb.AnyValue{Value: &commonpb.AnyValue_StringValue{StringValue: "api"}},
+		}}},
+		ScopeSpans: []*tracepb.ScopeSpans{{Spans: spans}},
+	}}})
+	require.NoError(t, err)
+	return b
+}
+
+func otlpSpan() *tracepb.Span {
+	now := uint64(time.Now().UnixNano())
+	return &tracepb.Span{
+		TraceId: bytes.Repeat([]byte{0xab}, 16), SpanId: bytes.Repeat([]byte{0xcd}, 8),
+		Name: "GET /", StartTimeUnixNano: now, EndTimeUnixNano: now + 1000,
+	}
+}
+
+func postTraces(h http.Handler, token, contentType, encoding string, body []byte) *httptest.ResponseRecorder {
+	return postOTLP(h, "/v1/traces", token, contentType, encoding, body)
+}
+
+func TestOTLPTracesAccepted(t *testing.T) {
+	ing := &fakeIngester{}
+	h := newOTLPHandler(t, ing, false)
+
+	rec := postTraces(h, ingestToken, "application/x-protobuf", "", tracesBody(t, otlpSpan()))
+	require.Equal(t, http.StatusOK, rec.Code, rec.Body.String())
+	assert.Equal(t, "application/x-protobuf", rec.Header().Get("Content-Type"))
+	assert.Empty(t, rec.Body.Bytes())
+
+	require.Len(t, ing.batches, 1)
+	require.Len(t, ing.batches[0].Spans, 1)
+	assert.Empty(t, ing.batches[0].Logs)
+	assert.Equal(t, "p1", ing.batches[0].Spans[0].Project)
+	assert.Equal(t, "api", ing.batches[0].Spans[0].Service)
+}
+
+func TestOTLPTracesGzip(t *testing.T) {
+	ing := &fakeIngester{}
+	rec := postTraces(newOTLPHandler(t, ing, false), ingestToken, "application/x-protobuf", "gzip", gzipped(t, tracesBody(t, otlpSpan())))
+	require.Equal(t, http.StatusOK, rec.Code, rec.Body.String())
+	require.Len(t, ing.batches, 1)
+	assert.Len(t, ing.batches[0].Spans, 1)
+}
+
+func TestOTLPTracesPartialSuccess(t *testing.T) {
+	ing := &fakeIngester{}
+	noStart := otlpSpan()
+	noStart.StartTimeUnixNano = 0
+	rec := postTraces(newOTLPHandler(t, ing, false), ingestToken, "application/x-protobuf", "",
+		tracesBody(t, otlpSpan(), noStart))
+	require.Equal(t, http.StatusOK, rec.Code)
+
+	rejected, msg, err := otlp.ParsePartialSuccess(rec.Body.Bytes())
+	require.NoError(t, err)
+	assert.Equal(t, int64(1), rejected)
+	assert.Equal(t, "span has no start_time_unix_nano", msg)
+	assert.Equal(t, int64(1), ing.rejected)
+	require.Len(t, ing.batches, 1)
+	assert.Len(t, ing.batches[0].Spans, 1)
+}
+
+func TestOTLPTracesRejections(t *testing.T) {
+	tests := []struct {
+		name        string
+		token       string
+		contentType string
+		body        []byte
+		want        int
+		contains    string
+	}{
+		{"read token", readToken, "application/x-protobuf", []byte{}, http.StatusForbidden, "ingest"},
+		{"json", ingestToken, "application/json", []byte("{}"), http.StatusUnsupportedMediaType, "protobuf"},
+		{"malformed", ingestToken, "application/x-protobuf", []byte{0xff, 0xff, 0xff}, http.StatusBadRequest, "malformed OTLP traces request"},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			ing := &fakeIngester{}
+			rec := postTraces(newOTLPHandler(t, ing, false), tt.token, tt.contentType, "", tt.body)
+			assert.Equal(t, tt.want, rec.Code, rec.Body.String())
+			assert.Contains(t, rec.Body.String(), tt.contains)
+			assert.Empty(t, ing.batches)
+		})
+	}
 }

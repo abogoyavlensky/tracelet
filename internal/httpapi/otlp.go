@@ -26,9 +26,35 @@ const MaxOTLPBody = 4 << 20
 
 const protobufType = "application/x-protobuf"
 
-// otlpLogs is OTLP/HTTP logs ingestion: protobuf only, optionally gzipped.
-// The batch is committed before the response, so a 200 means stored.
+// otlpLogs is OTLP/HTTP logs ingestion.
 func (h *Handler) otlpLogs(w http.ResponseWriter, r *http.Request) {
+	h.otlpIngest(w, r, "logs", func(body []byte, projectID string) (otlp.Converted, error) {
+		req, err := otlp.DecodeLogs(body)
+		if err != nil {
+			return otlp.Converted{}, err
+		}
+		return otlp.ConvertLogs(req, projectID), nil
+	})
+}
+
+// otlpTraces is OTLP/HTTP traces ingestion.
+func (h *Handler) otlpTraces(w http.ResponseWriter, r *http.Request) {
+	h.otlpIngest(w, r, "traces", func(body []byte, projectID string) (otlp.Converted, error) {
+		req, err := otlp.DecodeTraces(body)
+		if err != nil {
+			return otlp.Converted{}, err
+		}
+		return otlp.ConvertSpans(req, projectID), nil
+	})
+}
+
+// otlpIngest is OTLP/HTTP ingestion of one signal: protobuf only, optionally
+// gzipped. convert decodes the body into rows of the project; a decode error
+// is a malformed request. The batch is committed before the response, so a
+// 200 means stored.
+func (h *Handler) otlpIngest(w http.ResponseWriter, r *http.Request, signal string,
+	convert func(body []byte, projectID string) (otlp.Converted, error),
+) {
 	tok := tokenFrom(r.Context())
 	if tok.ProjectID == "" {
 		writeError(w, http.StatusForbidden, "ingestion needs a project-scoped ingest token")
@@ -56,15 +82,14 @@ func (h *Handler) otlpLogs(w http.ResponseWriter, r *http.Request) {
 		writeError(w, status, msg)
 		return
 	}
-	req, err := otlp.Decode(body)
+	converted, err := convert(body, string(tok.ProjectID))
 	if err != nil {
-		writeError(w, http.StatusBadRequest, "malformed OTLP logs request")
+		writeError(w, http.StatusBadRequest, "malformed OTLP "+signal+" request")
 		return
 	}
 
-	converted := otlp.ConvertLogs(req, string(tok.ProjectID))
 	h.ingester.RecordRejected(converted.Rejected, converted.UnknownService)
-	err = h.ingester.Submit(r.Context(), telemetry.Batch{Logs: converted.Logs})
+	err = h.ingester.Submit(r.Context(), converted.Batch())
 	switch {
 	case errors.Is(err, ingest.ErrOverloaded), errors.Is(err, ingest.ErrClosed):
 		w.Header().Set("Retry-After", "1")

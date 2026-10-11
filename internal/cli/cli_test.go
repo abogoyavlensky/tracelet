@@ -58,6 +58,14 @@ func newFakeAPI(t *testing.T) (*fakeAPI, *httptest.Server) {
 			w.WriteHeader(http.StatusNoContent)
 		case "GET /api/v1/logs":
 			_, _ = w.Write([]byte(logsJSON))
+		case "GET /api/v1/services":
+			_, _ = w.Write([]byte(servicesJSON))
+		case "GET /api/v1/spans":
+			_, _ = w.Write([]byte(spansJSON))
+		case "GET /api/v1/traces/" + traceID:
+			_, _ = w.Write([]byte(traceJSON))
+		case "GET /api/v1/traces/" + cycleTraceID:
+			_, _ = w.Write([]byte(cycleTraceJSON))
 		default:
 			w.WriteHeader(http.StatusNotFound)
 			_, _ = w.Write([]byte(`{"error":"not found"}`))

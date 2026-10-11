@@ -3,13 +3,14 @@ info:
   title: Tracelet API
   version: v1
   description: |
-    Management and query API under /api/v1/, and the OTLP/HTTP logs receiver
-    at /v1/logs.
+    Management and query API under /api/v1/, and the OTLP/HTTP logs and
+    traces receivers at /v1/logs and /v1/traces.
 
     Every route except health and this document needs a bearer token
     (`Authorization: Bearer tl_...`). Tokens have one scope:
 
-    - `ingest`: writes telemetry to one project, through /v1/logs only.
+    - `ingest`: writes telemetry to one project, through /v1/logs and
+      /v1/traces only.
     - `read`: reads one project, or every project when created without one.
     - `admin`: everything, including projects and tokens.
 
@@ -43,6 +44,42 @@ paths:
           description: |
             An `ExportLogsServiceResponse`; its `partial_success` names
             rejected records and the reason.
+          content:
+            application/x-protobuf:
+              schema: { type: string, format: binary }
+        "400": { $ref: "#/components/responses/Error" }
+        "401": { $ref: "#/components/responses/Error" }
+        "403": { $ref: "#/components/responses/Error" }
+        "413": { $ref: "#/components/responses/Error" }
+        "415": { $ref: "#/components/responses/Error" }
+        "503": { $ref: "#/components/responses/Unavailable" }
+
+  /v1/traces:
+    post:
+      summary: Ingest OTLP/HTTP traces
+      description: |
+        An OTLP `ExportTraceServiceRequest` in protobuf, optionally gzipped.
+        Needs an `ingest` token. The body may be at most 4 MB, before and
+        after decompression. A 200 means the spans are stored. A span whose
+        project, trace ID, and span ID are already stored in the hot window is
+        dropped and counted as `duplicate_spans` on health, so a retried
+        request does not store spans twice. `trace_state` and `flags` are not
+        stored. OTLP/JSON is not supported yet and gets 415.
+      operationId: ingestTraces
+      parameters:
+        - name: Content-Encoding
+          in: header
+          schema: { type: string, enum: [gzip, identity] }
+      requestBody:
+        required: true
+        content:
+          application/x-protobuf:
+            schema: { type: string, format: binary }
+      responses:
+        "200":
+          description: |
+            An `ExportTraceServiceResponse`; its `partial_success` names
+            rejected spans and the reason.
           content:
             application/x-protobuf:
               schema: { type: string, format: binary }
@@ -235,10 +272,88 @@ paths:
         "404": { $ref: "#/components/responses/Error" }
         "503": { $ref: "#/components/responses/Unavailable" }
 
+  /api/v1/traces/{trace_id}:
+    get:
+      summary: Get one trace
+      description: |
+        Needs a `read` token. Every span of the trace in the range, oldest
+        first and flat; nest them by `parent_span_id`. Without `from`, `to`,
+        or `last` the range is the last 7 days; widen it to find an older
+        trace. At most 5,000 spans are returned, with `truncated` set past
+        that. A trace with no spans in the range is a 404 naming the range.
+      operationId: getTrace
+      parameters:
+        - name: trace_id
+          in: path
+          required: true
+          description: 32 hex characters, case-insensitive.
+          schema: { type: string, pattern: "^[0-9a-fA-F]{32}$" }
+        - $ref: "#/components/parameters/Project"
+        - $ref: "#/components/parameters/From"
+        - $ref: "#/components/parameters/To"
+        - $ref: "#/components/parameters/Last"
+      responses:
+        "200":
+          description: The trace
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Trace" }
+        "400": { $ref: "#/components/responses/Error" }
+        "401": { $ref: "#/components/responses/Error" }
+        "403": { $ref: "#/components/responses/Error" }
+        "404": { $ref: "#/components/responses/Error" }
+        "503": { $ref: "#/components/responses/Unavailable" }
+
+  /api/v1/spans:
+    get:
+      summary: Search spans
+      description: |
+        Needs a `read` token. Results are newest first, with the same range
+        and cursor rules as logs search; without a range it is the last hour.
+        `root=true` lists root spans, which stands in for a list of traces: a
+        trace whose root span was never exported does not appear there.
+      operationId: searchSpans
+      parameters:
+        - $ref: "#/components/parameters/Project"
+        - { name: service, in: query, schema: { type: string } }
+        - { name: environment, in: query, schema: { type: string } }
+        - { name: name, in: query, description: Exact span name., schema: { type: string } }
+        - { name: status, in: query, schema: { type: string, enum: [unset, ok, error] } }
+        - name: min_duration
+          in: query
+          description: A positive Go duration, such as `500ms`; spans at least this long.
+          schema: { type: string }
+        - name: root
+          in: query
+          description: When true, only spans without a parent.
+          schema: { type: boolean }
+        - { name: trace_id, in: query, schema: { type: string } }
+        - name: attr
+          in: query
+          description: Repeatable `key:value`, an exact match on a top-level attribute.
+          explode: true
+          schema: { type: array, items: { type: string } }
+        - $ref: "#/components/parameters/From"
+        - $ref: "#/components/parameters/To"
+        - $ref: "#/components/parameters/Last"
+        - { name: limit, in: query, schema: { type: integer, minimum: 1, maximum: 1000, default: 100 } }
+        - { name: cursor, in: query, schema: { type: string } }
+      responses:
+        "200":
+          description: One page
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/SpansPage" }
+        "400": { $ref: "#/components/responses/Error" }
+        "401": { $ref: "#/components/responses/Error" }
+        "403": { $ref: "#/components/responses/Error" }
+        "404": { $ref: "#/components/responses/Error" }
+        "503": { $ref: "#/components/responses/Unavailable" }
+
   /api/v1/services:
     get:
-      summary: Services with logs in a range
-      description: Needs a `read` token. Busiest first.
+      summary: Services with logs or spans in a range
+      description: Needs a `read` token. Busiest first, by logs and spans together.
       operationId: listServices
       parameters:
         - $ref: "#/components/parameters/Project"
@@ -258,10 +373,11 @@ paths:
                     type: array
                     items:
                       type: object
-                      required: [service, logs]
+                      required: [service, logs, spans]
                       properties:
                         service: { type: string }
                         logs: { type: integer }
+                        spans: { type: integer }
                   range: { $ref: "#/components/schemas/Range" }
         "400": { $ref: "#/components/responses/Error" }
         "401": { $ref: "#/components/responses/Error" }
@@ -378,6 +494,82 @@ components:
         range: { $ref: "#/components/schemas/Range" }
         limit: { type: integer }
         truncated: { type: boolean, description: True when next_cursor is present. }
+    Span:
+      type: object
+      required: [ts, end_ts, duration_ns, service, trace_id, span_id, name, kind, status_code]
+      properties:
+        ts: { type: string, format: date-time, description: The span's start. }
+        end_ts: { type: string, format: date-time }
+        duration_ns: { type: integer }
+        service: { type: string }
+        environment: { type: string }
+        version: { type: string }
+        trace_id: { type: string }
+        span_id: { type: string }
+        parent_span_id: { type: string, description: Absent on a root span. }
+        name: { type: string }
+        kind:
+          type: integer
+          description: "The OTLP span kind: 0 unspecified, 1 internal, 2 server, 3 client, 4 producer, 5 consumer."
+        status_code:
+          type: integer
+          description: "The OTLP status code: 0 unset, 1 ok, 2 error."
+        status_message: { type: string }
+        scope: { type: string }
+        resource: { type: object }
+        attributes: { type: object }
+        events:
+          type: array
+          items:
+            type: object
+            required: [name]
+            properties:
+              ts: { type: string, format: date-time }
+              name: { type: string }
+              attributes: { type: object }
+        links:
+          type: array
+          items:
+            type: object
+            required: [trace_id, span_id]
+            properties:
+              trace_id: { type: string }
+              span_id: { type: string }
+              attributes: { type: object }
+    SpansPage:
+      type: object
+      required: [items, range, limit, truncated]
+      properties:
+        items:
+          type: array
+          items: { $ref: "#/components/schemas/Span" }
+        next_cursor: { type: string }
+        range: { $ref: "#/components/schemas/Range" }
+        limit: { type: integer }
+        truncated: { type: boolean, description: True when next_cursor is present. }
+    Trace:
+      type: object
+      description: |
+        One trace's spans. `start`, `end`, `duration_ns`, and `services`
+        describe the returned spans, which is the whole trace unless
+        `truncated` is true; then the later part of the trace is missing
+        from them too. To find the trace's logs, search logs with `trace_id`
+        from `start` to a little past `end`, since `to` is exclusive (and
+        equals `start` for a single span without an end time).
+      required: [trace_id, start, end, duration_ns, services, spans, range, truncated]
+      properties:
+        trace_id: { type: string }
+        start: { type: string, format: date-time, description: The earliest span start. }
+        end: { type: string, format: date-time, description: The latest span end. }
+        duration_ns: { type: integer }
+        services:
+          type: array
+          items: { type: string }
+        spans:
+          type: array
+          items: { $ref: "#/components/schemas/Span" }
+        range: { $ref: "#/components/schemas/Range" }
+        truncated: { type: boolean, description: True when the trace has more than 5,000 spans in the range. }
     Health:
       type: object
       required: [status, version, ready]
@@ -392,6 +584,7 @@ components:
             accepted_rows: { type: integer }
             rejected_rows: { type: integer }
             unknown_service_records: { type: integer }
+            duplicate_spans: { type: integer, description: Spans dropped because the same span was already stored in the hot window. }
             overloaded_requests: { type: integer }
             commits: { type: integer }
             failed_commits: { type: integer }

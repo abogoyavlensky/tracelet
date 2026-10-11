@@ -26,26 +26,21 @@ func (h *Handler) searchLogs(w http.ResponseWriter, r *http.Request) {
 	if !ok {
 		return
 	}
-
+	sp, err := h.parseSearch(q)
+	if err != nil {
+		h.queryError(w, r, err)
+		return
+	}
 	p := query.LogsParams{
 		ProjectID:   projectID,
 		Service:     q.Get("service"),
 		Environment: q.Get("environment"),
 		Query:       q.Get("q"),
 		TraceID:     q.Get("trace_id"),
-		Cursor:      q.Get("cursor"),
-	}
-	if p.Cursor != "" && (q.Has("from") || q.Has("to") || q.Has("last")) {
-		writeError(w, http.StatusBadRequest, "cursor cannot be combined with from, to, or last")
-		return
-	}
-	if p.Cursor == "" {
-		rng, err := h.parseRange(q)
-		if err != nil {
-			h.queryError(w, r, err)
-			return
-		}
-		p.Range = rng
+		Attrs:       sp.attrs,
+		Range:       sp.rng,
+		Limit:       sp.limit,
+		Cursor:      sp.cursor,
 	}
 	if level := q.Get("level"); level != "" {
 		n, err := query.ParseLevel(level)
@@ -55,23 +50,55 @@ func (h *Handler) searchLogs(w http.ResponseWriter, r *http.Request) {
 		}
 		p.MinSeverity = n
 	}
+
+	h.runQuery(w, r, func(ctx context.Context, snap *query.Snapshot) (any, error) {
+		return query.LogsSearch(ctx, snap, p)
+	})
+}
+
+// searchParams are the parameters every search shares.
+type searchParams struct {
+	cursor string
+	rng    query.Range // zero when a cursor positions the search
+	limit  int
+	attrs  []query.Attr
+}
+
+// parseSearch reads cursor, the range (last hour by default), limit, and the
+// repeatable attr. A cursor carries its own range, so it excludes from, to,
+// and last.
+func (h *Handler) parseSearch(q url.Values) (searchParams, error) {
+	sp := searchParams{cursor: q.Get("cursor")}
+	if sp.cursor != "" && (q.Has("from") || q.Has("to") || q.Has("last")) {
+		return sp, &query.ValidationError{Message: "cursor cannot be combined with from, to, or last"}
+	}
+	if sp.cursor == "" {
+		rng, err := h.parseRange(q, query.DefaultLast)
+		if err != nil {
+			return sp, err
+		}
+		sp.rng = rng
+	}
 	if limit := q.Get("limit"); limit != "" {
 		n, err := strconv.Atoi(limit)
 		if err != nil {
-			writeError(w, http.StatusBadRequest, "limit must be a number")
-			return
+			return sp, &query.ValidationError{Message: "limit must be a number"}
 		}
-		p.Limit = n
+		sp.limit = n
 	}
 	for _, s := range q["attr"] {
 		a, err := query.ParseAttr(s)
 		if err != nil {
-			h.queryError(w, r, err)
-			return
+			return sp, err
 		}
-		p.Attrs = append(p.Attrs, a)
+		sp.attrs = append(sp.attrs, a)
 	}
+	return sp, nil
+}
 
+// runQuery opens a snapshot under the query timeout, runs fn on it, and
+// answers with its result as JSON or with the mapped error.
+func (h *Handler) runQuery(w http.ResponseWriter, r *http.Request, fn func(context.Context, *query.Snapshot) (any, error)) {
 	ctx, cancel := context.WithTimeout(r.Context(), queryTimeout)
 	defer cancel()
 	snap, err := h.queries.Open(ctx)
@@ -81,12 +108,12 @@ func (h *Handler) searchLogs(w http.ResponseWriter, r *http.Request) {
 	}
 	defer snap.Close()
 
-	page, err := query.LogsSearch(ctx, snap, p)
+	v, err := fn(ctx, snap)
 	if err != nil {
 		h.queryError(w, r, err)
 		return
 	}
-	writeJSON(w, http.StatusOK, page)
+	writeJSON(w, http.StatusOK, v)
 }
 
 type servicesResponse struct {
@@ -100,27 +127,16 @@ func (h *Handler) services(w http.ResponseWriter, r *http.Request) {
 	if !ok {
 		return
 	}
-	rng, err := h.parseRange(q)
+	rng, err := h.parseRange(q, query.DefaultLast)
 	if err != nil {
 		h.queryError(w, r, err)
 		return
 	}
 
-	ctx, cancel := context.WithTimeout(r.Context(), queryTimeout)
-	defer cancel()
-	snap, err := h.queries.Open(ctx)
-	if err != nil {
-		h.queryError(w, r, err)
-		return
-	}
-	defer snap.Close()
-
-	items, err := query.Services(ctx, snap, projectID, rng)
-	if err != nil {
-		h.queryError(w, r, err)
-		return
-	}
-	writeJSON(w, http.StatusOK, servicesResponse{Items: items, Range: rng})
+	h.runQuery(w, r, func(ctx context.Context, snap *query.Snapshot) (any, error) {
+		items, err := query.Services(ctx, snap, projectID, rng)
+		return servicesResponse{Items: items, Range: rng}, err
+	})
 }
 
 // resolveProject returns the project ID a read request is about. A
@@ -151,8 +167,9 @@ func (h *Handler) resolveProject(w http.ResponseWriter, r *http.Request, slug st
 	return string(p.ID), true
 }
 
-// parseRange reads from and to (RFC 3339) or last (a Go duration).
-func (h *Handler) parseRange(q url.Values) (query.Range, error) {
+// parseRange reads from and to (RFC 3339) or last (a Go duration); with
+// none of them the range is the defaultLast ending now.
+func (h *Handler) parseRange(q url.Values, defaultLast time.Duration) (query.Range, error) {
 	var from, to time.Time
 	var last time.Duration
 	var err error
@@ -171,14 +188,19 @@ func (h *Handler) parseRange(q url.Values) (query.Range, error) {
 			return query.Range{}, &query.ValidationError{Message: "last must be a positive duration such as 30m or 2h"}
 		}
 	}
-	return query.ResolveRange(from, to, last, h.now())
+	return query.ResolveRange(from, to, last, defaultLast, h.now())
 }
 
-// queryError maps query failures: bad parameters are 400, running out of
-// time or query slots is 503, anything else is logged and 500.
+// queryError maps query failures: bad parameters are 400, a missing result
+// is 404, running out of time or query slots is 503, anything else is logged
+// and 500.
 func (h *Handler) queryError(w http.ResponseWriter, r *http.Request, err error) {
 	if verr, ok := errors.AsType[*query.ValidationError](err); ok {
 		writeError(w, http.StatusBadRequest, verr.Message)
+		return
+	}
+	if nerr, ok := errors.AsType[notFoundError](err); ok {
+		writeError(w, http.StatusNotFound, nerr.msg)
 		return
 	}
 	if errors.Is(err, context.DeadlineExceeded) || errors.Is(err, context.Canceled) {

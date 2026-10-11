@@ -1,6 +1,7 @@
 # Spans are not ingested, and trace lookup has no index
 
-**Status: open**
+**Status: done**
+Landed in the traces slice, [docs/plans/2026-10-11-0858-traces-slice.md](../plans/2026-10-11-0858-traces-slice.md) (branch `traces-slice`, `ac75571` through the commit "Document the traces slice and record its decisions"): `/v1/traces`, span deduplication in the writer, trace lookup, and span search. No trace index was built: the 7-day lookup measured 151 ms p95 on time-sorted span files, and the planned trace-sorted layout was slower ([docs/spikes/trace-lookup.md](../spikes/trace-lookup.md)).
 
 ## Problem
 

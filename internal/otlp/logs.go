@@ -16,27 +16,12 @@ import (
 	"github.com/abogoyavlensky/tracelet/internal/telemetry"
 )
 
-// UnknownService is the service of records whose resource has no
-// service.name, as the OpenTelemetry SDKs default it.
-const UnknownService = "unknown_service"
-
-// DefaultEnvironment is the environment of records whose resource has no
-// deployment.environment.name.
-const DefaultEnvironment = "default"
-
-// Resource attributes Tracelet files rows under.
-const (
-	attrServiceName    = "service.name"
-	attrServiceVersion = "service.version"
-	attrEnvironment    = "deployment.environment.name"
-)
-
-// Decode parses an OTLP/HTTP protobuf logs request body.
+// DecodeLogs parses an OTLP/HTTP protobuf logs request body.
 //
 // ExportLogsServiceRequest is field 1, repeated ResourceLogs, exactly the
 // wire layout of LogsData, so the body decodes into LogsData. That keeps the
 // collector package, which imports gRPC, out of the build.
-func Decode(body []byte) (*logspb.LogsData, error) {
+func DecodeLogs(body []byte) (*logspb.LogsData, error) {
 	var req logspb.LogsData
 	if err := proto.Unmarshal(body, &req); err != nil {
 		return nil, fmt.Errorf("decode logs request: %w", err)
@@ -48,9 +33,15 @@ func Decode(body []byte) (*logspb.LogsData, error) {
 // what was rejected and why, for the partial success response.
 type Converted struct {
 	Logs           []telemetry.Log
+	Spans          []telemetry.Span
 	Rejected       int64
 	RejectReason   string
 	UnknownService int64
+}
+
+// Batch returns the rows to store.
+func (c Converted) Batch() telemetry.Batch {
+	return telemetry.Batch{Logs: c.Logs, Spans: c.Spans}
 }
 
 // ConvertLogs turns a request into rows of the given project. A record with
@@ -59,18 +50,7 @@ type Converted struct {
 func ConvertLogs(req *logspb.LogsData, projectID string) Converted {
 	var c Converted
 	for _, rl := range req.GetResourceLogs() {
-		resAttrs := rl.GetResource().GetAttributes()
-		service := stringAttr(resAttrs, attrServiceName)
-		unknown := service == ""
-		if unknown {
-			service = UnknownService
-		}
-		resource := jsonObject(resAttrs)
-		environment := stringAttr(resAttrs, attrEnvironment)
-		if environment == "" {
-			environment = DefaultEnvironment
-		}
-		version := stringAttr(resAttrs, attrServiceVersion)
+		service, environment, version, resource, unknown := resourceInfo(rl.GetResource().GetAttributes())
 
 		for _, sl := range rl.GetScopeLogs() {
 			scope := sl.GetScope().GetName()
@@ -155,22 +135,23 @@ func jsonObject(kvs []*commonpb.KeyValue) string {
 	return string(b)
 }
 
-// ExportLogsServiceResponse field numbers.
+// Response field numbers, identical in ExportLogsServiceResponse and
+// ExportTraceServiceResponse, so one encoder serves both.
 const (
-	fieldPartialSuccess     = 1 // ExportLogsServiceResponse.partial_success
-	fieldRejectedLogRecords = 1 // ExportLogsPartialSuccess.rejected_log_records
-	fieldErrorMessage       = 2 // ExportLogsPartialSuccess.error_message
+	fieldPartialSuccess = 1 // Export{Logs,Trace}ServiceResponse.partial_success
+	fieldRejected       = 1 // rejected_log_records, rejected_spans
+	fieldErrorMessage   = 2 // Export{Logs,Trace}PartialSuccess.error_message
 )
 
-// PartialSuccess encodes the ExportLogsServiceResponse for a converted
-// request: empty when nothing was rejected, as OTLP asks, and otherwise a
+// PartialSuccess encodes the ExportLogsServiceResponse or
+// ExportTraceServiceResponse for a converted request: empty when nothing was rejected, as OTLP asks, and otherwise a
 // partial_success naming the rejected count and the reason.
 func PartialSuccess(c Converted) []byte {
 	if c.Rejected == 0 {
 		return []byte{}
 	}
 	var ps []byte
-	ps = protowire.AppendTag(ps, fieldRejectedLogRecords, protowire.VarintType)
+	ps = protowire.AppendTag(ps, fieldRejected, protowire.VarintType)
 	ps = protowire.AppendVarint(ps, uint64(c.Rejected))
 	if c.RejectReason != "" {
 		ps = protowire.AppendTag(ps, fieldErrorMessage, protowire.BytesType)
@@ -181,7 +162,8 @@ func PartialSuccess(c Converted) []byte {
 	return protowire.AppendBytes(out, ps)
 }
 
-// ParsePartialSuccess reads an ExportLogsServiceResponse, for clients and
+// ParsePartialSuccess reads an ExportLogsServiceResponse or
+// ExportTraceServiceResponse, for clients and
 // tests: the rejected count and message, zero when there is no partial
 // success.
 func ParsePartialSuccess(b []byte) (rejected int64, message string, err error) {
@@ -196,7 +178,7 @@ func ParsePartialSuccess(b []byte) (rejected int64, message string, err error) {
 		}
 		ps = ps[n:]
 		switch {
-		case num == fieldRejectedLogRecords && typ == protowire.VarintType:
+		case num == fieldRejected && typ == protowire.VarintType:
 			v, n := protowire.ConsumeVarint(ps)
 			if n < 0 {
 				return 0, "", protowire.ParseError(n)

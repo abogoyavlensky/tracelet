@@ -31,7 +31,10 @@ Commands:
                                         Create a token; prints it once
   tokens revoke <id>                    Revoke a token
   logs search [filters]                 Search logs
-  services [--project P] [--last D]     List services with logs
+  spans search [filters]                Search spans; --root lists traces
+  traces get <trace-id>                 Show a trace as a tree (last 7 days
+                                        unless --from/--to/--last widen it)
+  services [--project P] [--last D]     List services with log and span counts
 
 Every client command takes --url (default $TRACELET_URL or
 http://localhost:8080), --token (default $TRACELET_TOKEN), and --json.
@@ -69,6 +72,10 @@ func Run(args []string, stdout, stderr io.Writer) int {
 		err = runTokens(ctx, rest, stdout, stderr)
 	case "logs":
 		err = runLogs(ctx, rest, stdout, stderr)
+	case "spans":
+		err = runSpans(ctx, rest, stdout, stderr)
+	case "traces":
+		err = runTraces(ctx, rest, stdout, stderr)
 	case "services":
 		err = runServices(ctx, rest, stdout, stderr)
 	default:

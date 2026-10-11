@@ -23,7 +23,9 @@ import (
 var searchNow = time.Date(2026, 10, 10, 12, 0, 0, 0, time.UTC)
 
 // newSearchHandler serves the API over a real store holding three logs of
-// project p1 (the fake read token's project) and one of a project "other".
+// project p1 (the fake read token's project) and one of a project "other",
+// and spans: traceShop (a root and a child) and traceHealth (a root) in the
+// last hour, traceOld ten days ago, and one span of "other" in traceShop.
 func newSearchHandler(t *testing.T) http.Handler {
 	t.Helper()
 	dir := t.TempDir()
@@ -50,6 +52,12 @@ func newSearchHandler(t *testing.T) http.Handler {
 		{TS: ago(10), Project: "p1", Service: "api", SeverityNumber: 17, Body: "error three",
 			Attributes: `{"http.route":"/pay"}`},
 		{TS: ago(5), Project: string(other.ID), Service: "web", Body: "other project"},
+	}, Spans: []telemetry.Span{
+		testSpan("p1", "api", traceShop, rootShopID, "", "GET /pay", ago(50), 600*time.Millisecond, 2),
+		testSpan("p1", "worker", traceShop, "00000000000000c2", rootShopID, "charge", ago(50).Add(10*time.Millisecond), 30*time.Millisecond, 1),
+		testSpan("p1", "api", traceHealth, "00000000000000d1", "", "GET /health", ago(20), 2*time.Millisecond, 0),
+		testSpan("p1", "api", traceOld, "00000000000000e1", "", "GET /old", searchNow.Add(-10*24*time.Hour), time.Millisecond, 0),
+		testSpan(string(other.ID), "web", traceShop, "00000000000000f1", "", "GET /other", ago(5), time.Millisecond, 0),
 	}})
 	require.NoError(t, err)
 
@@ -162,12 +170,12 @@ func TestLogsEndpointBadParameters(t *testing.T) {
 	}
 }
 
-func TestServicesEndpoint(t *testing.T) {
+func TestServicesIncludesSpans(t *testing.T) {
 	h := newSearchHandler(t)
 	rec := do(t, h, http.MethodGet, "/api/v1/services?last=2h", readToken, "")
 	require.Equal(t, http.StatusOK, rec.Code, rec.Body.String())
 	got := decode[struct {
 		Items []query.ServiceCount `json:"items"`
 	}](t, rec)
-	assert.Equal(t, []query.ServiceCount{{Service: "api", Logs: 2}, {Service: "worker", Logs: 1}}, got.Items)
+	assert.Equal(t, []query.ServiceCount{{Service: "api", Logs: 2, Spans: 2}, {Service: "worker", Logs: 1, Spans: 1}}, got.Items)
 }
