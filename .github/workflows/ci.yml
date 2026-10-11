@@ -1,13 +1,16 @@
 name: ci
 
+# Master pushes are tested through deploy.yml and tags through release.yml,
+# which call this workflow; a push trigger here would test master twice.
 on:
-  push:
-    branches: [master]
   pull_request:
+  workflow_call:
 
 # A newer push to the same branch or PR supersedes the run in progress.
+# github.workflow is the caller's name when called, so a release dry run on
+# master never cancels a deploy's tests, nor the other way round.
 concurrency:
-  group: ci-${{ github.ref }}
+  group: ci-${{ github.workflow }}-${{ github.ref }}
   cancel-in-progress: true
 
 permissions:
@@ -61,3 +64,18 @@ jobs:
 
       - name: Smoke test the binary
         run: ./bin/tracelet version
+
+      # Builds tracelet:local around the bin/tracelet just built and asks it
+      # for /api/v1/health, so a broken Dockerfile fails the PR.
+      - name: Smoke-test the image
+        run: scripts/docker-smoke.sh
+
+      # The binary that release.yml and deploy.yml ship: the one that passed
+      # `rite check` on its own architecture. Artifacts lose the executable
+      # bit, so consumers chmod +x after downloading.
+      - uses: actions/upload-artifact@v7
+        with:
+          name: tracelet-linux-${{ matrix.arch }}
+          path: bin/tracelet
+          if-no-files-found: error
+          retention-days: 7

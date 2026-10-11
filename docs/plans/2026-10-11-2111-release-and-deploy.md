@@ -176,17 +176,17 @@ The only Go change is the `serve` split. `rite check`, now including `check-cli`
 **Files:**
 - Modify: `.github/workflows/ci.yml`
 
-- [ ] **Step 1: Change triggers and concurrency**
+- [x] **Step 1: Change triggers and concurrency**
   `on: pull_request:` and `workflow_call:`, with no `push`. Add a comment in pagelet's style: master pushes are tested through `deploy.yml`, tags through `release.yml`. Set the concurrency group to `ci-${{ github.workflow }}-${{ github.ref }}`, with a comment saying why.
 
-- [ ] **Step 2: Add the smoke and artifact steps**
+- [x] **Step 2: Add the smoke and artifact steps**
   After "Smoke test the binary", add a "Smoke-test the image" step that runs `scripts/docker-smoke.sh` directly (`rite build` already ran). Then upload `bin/tracelet` with `actions/upload-artifact` as `tracelet-linux-${{ matrix.arch }}`, with `if-no-files-found: error` and `retention-days: 7`.
 
-- [ ] **Step 3: Lint the workflow**
+- [x] **Step 3: Lint the workflow**
   Run: `docker run --rm -v "$PWD:/repo" -w /repo rhysd/actionlint:latest -color` (or `actionlint` if installed).
   Expected: no errors. If neither is available, say so and rely on the PR run.
 
-- [ ] **Step 4: Commit**
+- [x] **Step 4: Commit**
   `git commit -m "Build the shipped binary in CI and smoke-test its image"`
 
 ### Task 4: Release workflow
