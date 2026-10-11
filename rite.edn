@@ -19,12 +19,20 @@
                :do [{:sh "go test -race ./..."}
                     {:task web-test}]}
 
-  check       {:doc "Everything CI runs: fmt-check, lint, test"
-               :depends [fmt-check lint test]}
+  check       {:doc "Everything CI runs: fmt-check, lint, test, check-cli"
+               :depends [fmt-check lint test check-cli]}
+
+  check-cli   {:doc "Build the CLI without cgo, vet it, and fail if it links storage or the server"
+               :do [{:sh "CGO_ENABLED=0 go build -tags cli -o /dev/null ./cmd/tracelet"}
+                    {:sh "CGO_ENABLED=0 go vet -tags cli ./cmd/tracelet"}
+                    {:sh "deps=$(CGO_ENABLED=0 go list -deps -tags cli ./cmd/tracelet) && ! printf '%s\\n' \"$deps\" | grep -E 'duckdb|sqlite|tracelet/internal/(app|web|duckdb|sqlite|httpapi)'"}]}
 
   build       {:doc "Build the frontend and the server binary into bin/"
                :depends [web-build]
                :do {:sh "go build -trimpath -ldflags \"-s -w -X main.version=$(git describe --tags --always --dirty)\" -o bin/tracelet ./cmd/tracelet"}}
+
+  build-cli   {:doc "Build the CLI-only executable (no DuckDB, no cgo) into bin/cli/; GOOS and GOARCH cross-compile"
+               :do {:sh "CGO_ENABLED=0 go build -tags cli -trimpath -ldflags \"-s -w -X main.version=$(git describe --tags --always --dirty)\" -o bin/cli/tracelet ./cmd/tracelet"}}
 
   docker      {:doc "Build the image around bin/tracelet and check its health (needs a binary built on glibc 2.41 or older, as CI builds)"
                :depends [build]

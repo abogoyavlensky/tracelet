@@ -156,19 +156,19 @@ The only Go change is the `serve` split. `rite check`, now including `check-cli`
 - Create: `cmd/tracelet/serve.go`, `cmd/tracelet/serve_cli.go`
 - Modify: `cmd/tracelet/main.go`, `rite.edn`
 
-- [ ] **Step 1: Split `serve` behind the build tag**
+- [x] **Step 1: Split `serve` behind the build tag**
   Follow design decision 4a. `main.go` must no longer import `internal/app`; only `serve.go` does.
 
-- [ ] **Step 2: Add `build-cli` and `check-cli` to `rite.edn`**
+- [x] **Step 2: Add `build-cli` and `check-cli` to `rite.edn`**
   As in decision 4a. Write the dependency check as a shell one-liner in the task, but make a failing `go list` fail the task too: an inverted pipe alone passes when `go list` errors. For example, `deps=$(go list -deps -tags cli ./cmd/tracelet) && ! printf '%s\n' "$deps" | grep -E '<pattern>'`. Add `check-cli` to `check`'s `:depends`.
 
-- [ ] **Step 3: Verify**
+- [x] **Step 3: Verify**
   Run: `rite check-cli && GOOS=darwin GOARCH=arm64 rite build-cli && file bin/cli/tracelet && rite build-cli && ls -lh bin/cli/tracelet && bin/cli/tracelet version; bin/cli/tracelet serve; echo "exit=$?"`
   Expected: the darwin build is a Mach-O arm64 executable. The linux build is statically linked and well under 20 MB. `version` prints the describe string, and `serve` prints the CLI-only error with `exit=1`.
   Then make the check fail on purpose. Temporarily add `_ "github.com/abogoyavlensky/tracelet/internal/app"` to `serve_cli.go`; `rite check-cli` must fail. Revert.
   Then run: `rite check`. Expected: PASS.
 
-- [ ] **Step 4: Commit**
+- [x] **Step 4: Commit**
   `git commit -m "Build the CLI without DuckDB behind a cli build tag"`
 
 ### Task 3: CI builds the shipped binary and smoke-tests the image
