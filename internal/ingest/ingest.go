@@ -63,6 +63,7 @@ type counters struct {
 	acceptedRows    atomic.Int64
 	rejectedRows    atomic.Int64
 	unknownService  atomic.Int64
+	duplicateSpans  atomic.Int64
 	overloaded      atomic.Int64
 	commits         atomic.Int64
 	failedCommits   atomic.Int64
@@ -180,6 +181,7 @@ func (i *Ingester) commit(ctx context.Context, pending []*submission, rows int) 
 	} else {
 		i.stats.commits.Add(1)
 		i.stats.acceptedRows.Add(int64(st.Rows))
+		i.stats.duplicateSpans.Add(int64(st.Duplicates))
 		i.stats.lastCommitNanos.Store(time.Now().UnixNano())
 		i.stats.lastLatency.Store(int64(st.Latency))
 	}
@@ -205,6 +207,7 @@ type Stats struct {
 	AcceptedRows      int64         `json:"accepted_rows"`
 	RejectedRows      int64         `json:"rejected_rows"`
 	UnknownService    int64         `json:"unknown_service_records"`
+	DuplicateSpans    int64         `json:"duplicate_spans"`
 	Overloaded        int64         `json:"overloaded_requests"`
 	Commits           int64         `json:"commits"`
 	FailedCommits     int64         `json:"failed_commits"`
@@ -219,6 +222,7 @@ func (i *Ingester) Stats() Stats {
 		AcceptedRows:      i.stats.acceptedRows.Load(),
 		RejectedRows:      i.stats.rejectedRows.Load(),
 		UnknownService:    i.stats.unknownService.Load(),
+		DuplicateSpans:    i.stats.duplicateSpans.Load(),
 		Overloaded:        i.stats.overloaded.Load(),
 		Commits:           i.stats.commits.Load(),
 		FailedCommits:     i.stats.failedCommits.Load(),

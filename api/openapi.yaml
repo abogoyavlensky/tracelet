@@ -392,6 +392,7 @@ components:
             accepted_rows: { type: integer }
             rejected_rows: { type: integer }
             unknown_service_records: { type: integer }
+            duplicate_spans: { type: integer, description: Spans dropped because the same span was already stored in the hot window. }
             overloaded_requests: { type: integer }
             commits: { type: integer }
             failed_commits: { type: integer }
