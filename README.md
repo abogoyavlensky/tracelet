@@ -6,9 +6,9 @@ Self-hosted logs, traces, metrics, errors, and alerts for personal projects in o
 executable with one data directory. See [docs/VISION.md](docs/VISION.md) for the
 direction and [docs/DESIGN.md](docs/DESIGN.md) for the technical design.
 
-Status: early. Tracelet ingests **logs only** so far, over OTLP/HTTP with
-protobuf encoding, and searches them through the HTTP API and the CLI. Traces,
-metrics, the UI explore view, and everything else in the vision come later.
+Status: early. Tracelet ingests **logs and traces** so far, over OTLP/HTTP with
+protobuf encoding, and searches them through the HTTP API and the CLI. Metrics,
+the UI, and everything else in the vision come later.
 
 ## Quickstart
 
@@ -31,7 +31,8 @@ tracelet tokens create --project shop --scope ingest --name "api server"
 # prints tl_... once: the ingest token
 ```
 
-Point any OpenTelemetry SDK at Tracelet. The SDK appends `/v1/logs` itself:
+Point any OpenTelemetry SDK at Tracelet. The SDK appends `/v1/logs` and
+`/v1/traces` itself:
 
 ```sh
 OTEL_EXPORTER_OTLP_ENDPOINT=http://localhost:8080
@@ -45,13 +46,35 @@ Tracelet files every record under three resource attributes: `service.name`
 (`unknown_service` when missing), `deployment.environment.name` (`default` when
 missing), and `service.version`. OTLP/JSON and gRPC are not supported yet.
 
-Search:
+An SDK retries a whole request when it loses a response, so a span that is
+already stored is dropped and counted as `duplicate_spans` on health. That
+check covers the current and previous hour, which are still in DuckDB; a retry
+arriving after its hour was flushed to Parquet is stored twice. Logs are not
+deduplicated. Span `trace_state` and `flags` are not stored.
+
+Search logs:
 
 ```sh
 tracelet logs search --project shop --service api --level error --last 30m
 tracelet logs search --project shop --attr exception.type:Timeout --json
-tracelet services --project shop --last 24h
+tracelet services --project shop --last 24h    # log and span counts per service
 ```
+
+Find traces and follow one into its logs:
+
+```sh
+# root spans stand in for a trace list; slow failing requests of the last hour
+tracelet spans search --project shop --service api --root --status error --min-duration 500ms --last 1h
+tracelet traces get 4bf92f3577b34da6a3ce929d0e0e4736 --project shop
+# the trace's start and end bound its logs; --to is exclusive
+tracelet logs search --project shop --trace-id 4bf92f3577b34da6a3ce929d0e0e4736 \
+  --from 2026-10-11T09:14:02Z --to 2026-10-11T09:14:04Z
+```
+
+`traces get` prints the spans as a tree and looks back 7 days unless
+`--from`/`--to` or `--last` say otherwise; its `--json` output carries `start`
+and `end`. A trace whose root span was never exported does not show up in
+`spans search --root`; search its other spans instead.
 
 A `read` token created with `--scope read --project shop` limits the CLI to one
 project. The API is described at `/api/v1/openapi.yaml`; health and counters are
@@ -94,12 +117,12 @@ rite web-dev        # Vite on :5173, proxies /api to :8080
 | `internal/httpapi` | HTTP handlers: OTLP at `/v1/`, the API at `/api/v1/` |
 | `internal/cli` | The CLI, a client of the HTTP API |
 | `internal/project` | Projects and scoped tokens |
-| `internal/otlp` | OTLP decoding into telemetry rows |
+| `internal/otlp` | OTLP logs and traces decoding into telemetry rows |
 | `internal/ingest` | Bounded queue and the single batching writer loop |
 | `internal/duckdb` | Hot DuckDB tables and the writer |
 | `internal/flush` | Hourly flush to Parquet, reconcile, retention |
 | `internal/manifest` | The Parquet file manifest |
-| `internal/query` | Consistent snapshots, logs search, services |
+| `internal/query` | Consistent snapshots, logs and span search, trace lookup, services |
 | `internal/sqlite` | `tracelet.sqlite`: migrations, project and token store |
 | `internal/telemetry` | Row types for the three signals |
 | `internal/web` | Serves the embedded frontend build |

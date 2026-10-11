@@ -1,6 +1,6 @@
 # Tracelet design
 
-Status: initial technical design, 7 October 2026. This document records the chosen implementation direction for the vision in [VISION.md](VISION.md). Decisions marked **decided** are the plan unless phase 0 measurements contradict them. Everything else is a candidate. Phase 0 measured the storage layout on 8 October 2026; see [the storage spike results](spikes/storage.md). Phase 1 slice 1 (10 October 2026, [plan](plans/2026-10-10-1027-logs-slice.md)) built the storage layer, projects and tokens, OTLP/HTTP logs ingestion, logs search, and the CLI for them; nothing else here has been built yet.
+Status: initial technical design, 7 October 2026. This document records the chosen implementation direction for the vision in [VISION.md](VISION.md). Decisions marked **decided** are the plan unless phase 0 measurements contradict them. Everything else is a candidate. Phase 0 measured the storage layout on 8 October 2026; see [the storage spike results](spikes/storage.md). Phase 1 slice 1 (10 October 2026, [plan](plans/2026-10-10-1027-logs-slice.md)) built the storage layer, projects and tokens, OTLP/HTTP logs ingestion, logs search, and the CLI for them. Phase 1 slice 2 (11 October 2026, [plan](plans/2026-10-11-0858-traces-slice.md)) added OTLP/HTTP traces ingestion with span deduplication, trace lookup by ID, span search, and their CLI commands. Nothing else here has been built yet.
 
 ## Architecture
 
@@ -82,15 +82,15 @@ A flush also adopts published but unrecorded files of its hour before exporting,
 
 **Schema evolution.** New columns are nullable. The hot table changes with `ALTER TABLE ADD COLUMN`; old Parquet files are read with union by name. The manifest records the schema version so migrations can rewrite old partitions if ever required.
 
-**Trace lookup by ID.** Trace IDs are random so min/max statistics do not prune. The initial approach is a time-bounded scan reading only the trace ID column, defaulting to the last seven days and extendable by the caller. Trace lists and log links always carry timestamps, so most lookups are already bounded. Phase 0 measured an unbounded 7-day lookup at the `busy` workload at 0.94 s p50 and 1.03 s p95, and 1.8 s p95 under concurrent query load. That misses the 1 s target, so the fallback is needed: a small per-partition trace index file listing trace ID and time range, written at flush (see open decisions).
+**Trace lookup by ID: a time-bounded scan, no index (decided, phase 1).** Trace IDs are random, so min/max statistics on time-sorted files do not prune. A lookup scans the span files of its range through the usual snapshot, defaulting to the last seven days and extendable by the caller; trace lists and log links carry timestamps, so most lookups are bounded more tightly. Phase 0 measured a 7-day lookup at 0.94 s p50 and 1.03 s p95, and 1.8 s p95 under concurrent query load, and proposed an index. Phase 1 measured the product's query path over 168 hours of `busy`-shaped span files at **118 ms p50 and 151 ms p95** ([trace lookup results](spikes/trace-lookup.md)). It also measured the planned index, span files sorted by trace ID in row groups of 10,000 so statistics prune all but one row group per file. That layout was slower at 489 ms p95, because every lookup reads all 168 footers and small row groups make them large, and it flushed slower and wrote more bytes. Span files therefore stay sorted by time, like every signal. Revisit when lookups are measured under concurrent load, or when span rates or retention grow well past `busy`.
 
 **Rollups** for long retention are a later addition computed from cold partitions into separate rollup files. They are not needed until retention exceeds what raw scans handle inside the memory budget.
 
 ## Ingestion and durability
 
-Endpoints follow OTLP/HTTP at `/v1/logs` (and later `/v1/traces`, `/v1/metrics`), outside `/api/`, because every SDK appends that path to the configured endpoint (decided, phase 1). Users set `OTEL_EXPORTER_OTLP_ENDPOINT=http://host:8080` and nothing else. Gzip is accepted, and the 4 MB body limit applies before and after decompression.
+Endpoints follow OTLP/HTTP at `/v1/logs` and `/v1/traces` (and later `/v1/metrics`), outside `/api/`, because every SDK appends that path to the configured endpoint (decided, phase 1). Users set `OTEL_EXPORTER_OTLP_ENDPOINT=http://host:8080` and nothing else. Gzip is accepted, and the 4 MB body limit applies before and after decompression.
 
-**Protobuf first (decided, phase 1).** OTLP/JSON encodes trace and span IDs as hex, which `protojson` does not, so correct support needs its own decoding. The Go, Java, Python, and .NET SDKs default to protobuf. JSON requests get 415 until the browser and mobile slice ([backlog](backlog/otlp-json-encoding.md)). gRPC is deferred until a real SDK needs it ([backlog](backlog/otlp-grpc.md)). Requests decode into `LogsData`, which is wire-identical to `ExportLogsServiceRequest`, so the gRPC-importing collector package stays out of the build.
+**Protobuf first (decided, phase 1).** OTLP/JSON encodes trace and span IDs as hex, which `protojson` does not, so correct support needs its own decoding. The Go, Java, Python, and .NET SDKs default to protobuf. JSON requests get 415 until the browser and mobile slice ([backlog](backlog/otlp-json-encoding.md)). gRPC is deferred until a real SDK needs it ([backlog](backlog/otlp-grpc.md)). Requests decode into `LogsData` and `TracesData`, which are wire-identical to `ExportLogsServiceRequest` and `ExportTraceServiceRequest`, so the gRPC-importing collector package stays out of the build. Both routes share one handler and one partial success encoding, since the two responses have the same field numbers.
 
 1. Authenticate the token, resolve the project, enforce request size and per-project limits.
 2. Decode and validate. Reject unsupported signal types explicitly. Report partial acceptance using the OTLP partial success response.
@@ -100,7 +100,9 @@ Endpoints follow OTLP/HTTP at `/v1/logs` (and later `/v1/traces`, `/v1/metrics`)
 
 Data in the queue is unacknowledged, so a crash loses nothing the exporter believes delivered. A lost response after a commit can still produce duplicates. This is at-least-once, not exactly-once.
 
-Duplicate policy per signal: spans are deduplicated on trace ID plus span ID within the hot window. Logs are not deduplicated. Metric points are deduplicated on series hash, start timestamp, and timestamp, which covers retried delta and cumulative points alike.
+Duplicate policy per signal: spans are deduplicated on project, trace ID, and span ID within the hot window. Logs are not deduplicated.
+
+**Span deduplication in the writer (decided, phase 1).** Inside the write transaction, before appending, the writer selects the keys of hot spans that share a trace ID with the batch and fall within its time span, and skips any span whose key is there or earlier in the batch. The project is part of the key because one commit can hold several projects' submissions. Skipped spans are counted as `duplicate_spans` on health, not absorbed into row counts. A retry that arrives after its hour was flushed is not caught; the README says so. Metric points are deduplicated on series hash, start timestamp, and timestamp, which covers retried delta and cumulative points alike.
 
 When the queue is full, respond with a retryable failure and `Retry-After`. Never acknowledge discarded data. A SQLite inbox for durable burst absorption stays rejected unless phase 0 shows a need.
 
@@ -136,7 +138,7 @@ High-cardinality investigation context such as request IDs belongs in logs and s
 
 ### Traces
 
-Trace search, span attributes, parent and child relationships, duration, status, waterfall view, span events and links. Logs correlate through trace and span IDs. Spans arrive separately and out of order; a trace view may be incomplete and refreshes while open. Sampling is visible and sampled traces are never presented as exact traffic totals.
+Trace search, span attributes, parent and child relationships, duration, status, waterfall view, span events and links. Span search lists spans; restricted to root spans (`root=true`) it approximates a trace list, missing only traces whose root span was never exported. A trace response carries its start and end so a client can bound the follow-up logs search. Logs correlate through trace and span IDs. Spans arrive separately and out of order; a trace view may be incomplete and refreshes while open. Sampling is visible and sampled traces are never presented as exact traffic totals.
 
 ### Logs and application events
 
@@ -264,9 +266,8 @@ Phases 1 to 4 follow the vision. Each feature ships with API and CLI access. Sco
 ## Open decisions
 
 - Memory below 1.5 GB: `allocator_background_threads` saves about 200 MB but regressed real-time commit p99 in a run that also changed `GOMEMLIMIT` and added sampling. Adopt it only after a run that isolates its effect on latency ([backlog](backlog/allocator-background-threads-isolation-run.md)). A `memory_limit` below 256 MB needs a flush that sorts an hour in less memory.
-- Trace index: phase 0 showed it is needed (7-day lookup p95 1.03 s alone, 1.8 s under load). Open questions are its format and whether it is written at flush or compaction ([backlog](backlog/spans-ingestion-and-trace-index.md)).
 - Late-data compaction: 1% late logs triples the log file count; decide when an hour is closed and its small late files are merged ([backlog](backlog/late-data-compaction.md)).
-- Duplicate handling on ingest, out of scope for phase 0, needs its own design against the measured Appender throughput.
+- Metric point deduplication on ingest needs its own design when metrics ship; spans are deduplicated in the writer.
 - Non time-series chart components after the UI prototype.
 - Exact attribute redaction rule format.
 
@@ -286,7 +287,9 @@ Phases 1 to 4 follow the vision. Each feature ships with API and CLI access. Sco
 | Ingest stamps | One per row, a microsecond apart, seeded from hot and the manifest at startup | `(ts, ingest_ts)` becomes a unique key for cursors; survives restarts and clock steps |
 | Writer batches | 2,000 rows or 250 ms; a request is never split | Small commits at the normal workload; no partial commit for a retry to duplicate |
 | SQLite driver | `modernc.org/sqlite`, one `tracelet.sqlite` | Pure Go keeps DuckDB the only native dependency |
-| OTLP | `/v1/logs` over HTTP, protobuf first | The path SDKs append; JSON needs hex-ID decoding, gRPC a large dependency |
+| OTLP | `/v1/logs` and `/v1/traces` over HTTP, protobuf first | The paths SDKs append; JSON needs hex-ID decoding, gRPC a large dependency |
+| Trace lookup | Time-bounded scan of time-sorted span files, 7-day default; no trace index | 151 ms p95 over 7 days at `busy`; a trace-sorted layout with small row groups measured slower (489 ms p95) |
+| Span duplicates | Dropped in the writer against the hot window, keyed on project, trace ID, and span ID; counted on health | Catches an SDK retry after a lost response without a second store; a retry after the hour's flush is accepted as rare |
 | Jobs before phase 3 | A once-a-minute maintenance ticker | The jobs table arrives with alerts |
 | Hot window | Current and previous hour, hourly flush | Hot file flat at about 90 MB; flush at most about 2 s per signal and hour at `busy` |
 | MCP | Not planned | OpenAPI plus a JSON CLI is sufficient for agents and more stable |
