@@ -126,6 +126,8 @@ func TestConvertSpansRejectReasons(t *testing.T) {
 	}{
 		{"short trace id", &tracepb.Span{TraceId: traceID[:4], SpanId: spanID, StartTimeUnixNano: nanos(t0)}, "span trace_id must be 16 bytes"},
 		{"no span id", &tracepb.Span{TraceId: traceID, StartTimeUnixNano: nanos(t0)}, "span span_id must be 8 bytes"},
+		{"zero trace id", &tracepb.Span{TraceId: make([]byte, 16), SpanId: spanID, StartTimeUnixNano: nanos(t0)}, "span trace_id must not be all zeros"},
+		{"zero span id", &tracepb.Span{TraceId: traceID, SpanId: make([]byte, 8), StartTimeUnixNano: nanos(t0)}, "span span_id must not be all zeros"},
 		{"no start", &tracepb.Span{TraceId: traceID, SpanId: spanID}, "span has no start_time_unix_nano"},
 		{"start out of range", &tracepb.Span{TraceId: traceID, SpanId: spanID, StartTimeUnixNano: 1 << 63}, "timestamp out of range"},
 		{"end out of range", &tracepb.Span{TraceId: traceID, SpanId: spanID, StartTimeUnixNano: nanos(t0), EndTimeUnixNano: 1 << 63}, "timestamp out of range"},

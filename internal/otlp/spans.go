@@ -27,7 +27,8 @@ func DecodeTraces(body []byte) (*tracepb.TracesData, error) {
 }
 
 // ConvertSpans turns a request into span rows of the given project. A span
-// whose trace or span ID has the wrong length, that has no start time, or
+// whose trace or span ID has the wrong length or is all zeros (invalid in
+// OTLP), that has no start time, or
 // that has any timestamp past what int64 nanoseconds hold, is rejected; the
 // rest of the request is kept. trace_state, flags, and the dropped counts are
 // not stored.
@@ -85,6 +86,10 @@ func checkSpan(sp *tracepb.Span) string {
 		return "span trace_id must be 16 bytes"
 	case len(sp.GetSpanId()) != 8:
 		return "span span_id must be 8 bytes"
+	case allZero(sp.GetTraceId()):
+		return "span trace_id must not be all zeros"
+	case allZero(sp.GetSpanId()):
+		return "span span_id must not be all zeros"
 	case sp.GetStartTimeUnixNano() == 0:
 		return "span has no start_time_unix_nano"
 	}
@@ -97,6 +102,15 @@ func checkSpan(sp *tracepb.Span) string {
 		}
 	}
 	return ""
+}
+
+func allZero(b []byte) bool {
+	for _, x := range b {
+		if x != 0 {
+			return false
+		}
+	}
+	return true
 }
 
 func unixNano(n uint64) time.Time { return time.Unix(0, int64(n)).UTC() }
