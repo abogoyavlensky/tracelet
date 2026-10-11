@@ -1,6 +1,8 @@
 # The CLI cannot be built without DuckDB
 
-**Status: open**
+**Status: done**
+
+Shipped in `docs/plans/2026-10-11-2111-release-and-deploy.md`: a `cli` build tag on `cmd/tracelet`, `rite build-cli` and `rite check-cli`, and four CLI tarballs per release. Windows is not built yet.
 
 ## Problem
 

@@ -251,19 +251,19 @@ The only Go change is the `serve` split. `rite check`, now including `check-cli`
 - Create: `docs/operations.md`
 - Modify: `README.md`, `docs/DESIGN.md`, `AGENTS.md`
 
-- [ ] **Step 1: `docs/operations.md`**
+- [x] **Step 1: `docs/operations.md`**
   This is the maintainer reference, in pagelet's shape, with these sections:
   - **Docker:** what the image is, `/app/data`, the glibc rule, `rite docker`.
   - **Releases:** the tag flow, what gets published, and the dry run from the Actions tab.
   - **Deployment:** what happens on a master push, then the variables-and-secrets table and DNS record from the design. Also cover the first-run steps: point the CLI at `https://$APP_DOMAIN` with `TRACELET_URL` and the admin token, then create a project and an ingest token. Then the admin token rotation note, data at `/root/tracelet-data` (not backed up; link the backlog entry), stop-first meaning a few seconds of refused ingestion per deploy (SDKs retry), and the `uc logs tracelet` and `uc ls` commands.
 
-- [ ] **Step 2: README**
+- [x] **Step 2: README**
   Add an "Install" section before the Quickstart. The CLI: `mise use github:abogoyavlensky/tracelet`, or the `tracelet-<os>-<arch>.tar.gz` tarball, on Linux or macOS. The server: the Docker image, or `tracelet-server-linux-<arch>.tar.gz` (glibc 2.39 or newer), which is also a full CLI. Then `docker run -p 8080:8080 -v tracelet-data:/app/data -e TRACELET_ADMIN_TOKEN=… ghcr.io/abogoyavlensky/tracelet`. Point `TRACELET_URL` at the server when using the CLI elsewhere. Link `docs/operations.md` from "Development".
 
-- [ ] **Step 3: DESIGN and AGENTS**
+- [x] **Step 3: DESIGN and AGENTS**
   In DESIGN's status line, say that packaging shipped: a Docker image and Linux release binaries on tags, plus a master deploy. Update "Platforms" to what ships: the combined executable for Linux amd64 and arm64, the Docker image, and the CLI-only build for Linux and macOS (`-tags cli`, no cgo). Windows is added on demand. This amends a **decided** item, at the owner's request, and the text says so. Mark `docs/backlog/cli-only-build-without-duckdb.md` `**Status: done**` with a line naming this plan. In AGENTS.md, add a short "Release and deploy" note: `cmd/tracelet` has a `cli` build tag, and the CLI build must not link storage (`rite check-cli`); `ci.yml` builds the binary that ships; `release.yml` on tags and `deploy.yml` on master call it; never ship a binary built on a newer glibc than trixie's 2.41; see `docs/operations.md`.
 
-- [ ] **Step 4: Check and commit**
+- [x] **Step 4: Check and commit**
   Run: `rite check`. Expected: PASS.
   `git commit -m "Document releases and the master deploy"`
 
