@@ -269,7 +269,7 @@ The only Go change is the `serve` split. `rite check`, now including `check-cli`
 
 ### Task 7: PR, first deploy, first release
 
-- [ ] **Step 1: Open the PR**
+- [x] **Step 1: Open the PR**
   Push the branch and open a PR to `master`, then link it with `link_pull_request`. The PR body lists the variables, secrets and DNS record from the design, under a "Before merging" heading.
   Expected: `ci` passes on both architectures, including the image smoke test.
 
@@ -285,3 +285,5 @@ The only Go change is the `serve` split. `rite check`, now including `check-cli`
 
 - [ ] **Step 4: First release, only if the owner asks for it**
   `git tag v0.1.0 && git push origin v0.1.0`, then watch `release`. Expected: ghcr has `0.1.0`, `0.1` and `latest` as an index of `linux/amd64` and `linux/arm64`. The release has six tarballs (four CLI, two server) and `checksums.txt`, and the downloaded server amd64 binary's `version` prints `v0.1.0`. Check the package is public by pulling it anonymously, logged out of ghcr: `docker logout ghcr.io; docker pull ghcr.io/abogoyavlensky/tracelet:0.1.0`. If the pull is denied, ask the owner to set the package's visibility to public under its package settings. Check that mise installs the release on Linux: `MISE_DATA_DIR=$(mktemp -d) mise exec github:abogoyavlensky/tracelet@0.1.0 -- tracelet version` prints `v0.1.0`, and `tracelet serve` under the same `mise exec` prints the CLI-only error. That proves mise picked the CLI, not the server tarball.
+
+> Status: Tasks 1-6 done and each reviewed with codex (no must-fix findings; one advisory on Task 3: removing the master push trigger before `deploy.yml` exists, resolved by Task 5 in the same PR). PR #5 is open and `ci` passes on both architectures, including the image smoke test. Steps 2-4 wait for the owner: variables, secrets, DNS, merge, then the first deploy and release.
