@@ -12,13 +12,13 @@ import (
 	"github.com/abogoyavlensky/tracelet/internal/telemetry"
 )
 
-// writePoints writes points and, when cold, flushes every hour before h2.
+// writePoints writes points and, when cold, flushes every hour written so far.
 func writePoints(t *testing.T, e *env, cold bool, points ...telemetry.MetricPoint) {
 	t.Helper()
 	_, err := e.writer.Write(t.Context(), telemetry.Batch{Points: points})
 	require.NoError(t, err)
 	if cold {
-		_, err = e.flusher.FlushDue(t.Context(), h2.Add(time.Hour))
+		_, err = e.flusher.FlushDue(t.Context(), h2.Add(24*time.Hour))
 		require.NoError(t, err)
 	}
 }
