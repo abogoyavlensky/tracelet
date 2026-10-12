@@ -13,6 +13,7 @@ import { ApiError } from './api'
 import { AppShell } from './components/AppShell'
 import { LoginPage } from './pages/LoginPage'
 import { LogsPage } from './pages/LogsPage'
+import { TracesPage } from './pages/TracesPage'
 import { Placeholder } from './pages/Placeholder'
 import {
   parseSearchString,
@@ -92,7 +93,7 @@ export const tracesRoute = createRoute({
   path: 'traces',
   validateSearch: validateTracesSearch,
   component: function TracesRoute() {
-    return <Placeholder title="Traces" data={tracesRoute.useSearch()} />
+    return <TracesPage search={tracesRoute.useSearch()} />
   },
 })
 
