@@ -8,8 +8,10 @@ import (
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+	metricspb "go.opentelemetry.io/proto/otlp/metrics/v1"
 
 	"github.com/abogoyavlensky/tracelet/internal/duckdb"
+	"github.com/abogoyavlensky/tracelet/internal/otlp"
 	"github.com/abogoyavlensky/tracelet/internal/telemetry"
 )
 
@@ -64,7 +66,7 @@ func TestWriterWritesBatch(t *testing.T) {
 	require.NoError(t, err)
 
 	assert.Equal(t, 7, stats.Rows)
-	assert.Zero(t, stats.Duplicates)
+	assert.Zero(t, stats.DuplicateSpans)
 	assert.Positive(t, stats.Latency)
 	assert.Equal(t, 3, countRows(t, s, "logs"))
 	assert.Equal(t, 2, countRows(t, s, "spans"))
@@ -239,7 +241,7 @@ func TestWriterDropsDuplicateSpans(t *testing.T) {
 	stats, err := w.Write(t.Context(), telemetry.Batch{Spans: first})
 	require.NoError(t, err)
 	assert.Equal(t, 3, stats.Rows)
-	assert.Zero(t, stats.Duplicates)
+	assert.Zero(t, stats.DuplicateSpans)
 
 	repeat := span("p1", "2", "5", ts)
 	again := repeat
@@ -248,7 +250,7 @@ func TestWriterDropsDuplicateSpans(t *testing.T) {
 	stats, err = w.Write(t.Context(), telemetry.Batch{Spans: second})
 	require.NoError(t, err)
 	assert.Equal(t, 2, stats.Rows)
-	assert.Equal(t, 4, stats.Duplicates)
+	assert.Equal(t, 4, stats.DuplicateSpans)
 
 	assert.Equal(t, 5, countRows(t, s, "spans"))
 	names := spanNames(t, s)
@@ -271,7 +273,7 @@ func TestWriterDedupIgnoresOtherHours(t *testing.T) {
 	}})
 	require.NoError(t, err)
 	assert.Equal(t, 1, stats.Rows)
-	assert.Equal(t, 1, stats.Duplicates)
+	assert.Equal(t, 1, stats.DuplicateSpans)
 	assert.Equal(t, 2, countRows(t, s, "spans"))
 }
 
@@ -285,7 +287,7 @@ func TestWriterDedupIsPerProject(t *testing.T) {
 		}})
 		require.NoError(t, err)
 		assert.Equal(t, 2, stats.Rows)
-		assert.Zero(t, stats.Duplicates)
+		assert.Zero(t, stats.DuplicateSpans)
 		assert.Equal(t, 2, countRows(t, s, "spans"))
 	})
 
@@ -297,12 +299,83 @@ func TestWriterDedupIsPerProject(t *testing.T) {
 		stats, err := w.Write(t.Context(), telemetry.Batch{Spans: []telemetry.Span{span("p2", "1", "1", ts)}})
 		require.NoError(t, err)
 		assert.Equal(t, 1, stats.Rows)
-		assert.Zero(t, stats.Duplicates)
+		assert.Zero(t, stats.DuplicateSpans)
 
 		stats, err = w.Write(t.Context(), telemetry.Batch{Spans: []telemetry.Span{span("p2", "1", "1", ts)}})
 		require.NoError(t, err)
 		assert.Zero(t, stats.Rows)
-		assert.Equal(t, 1, stats.Duplicates)
+		assert.Equal(t, 1, stats.DuplicateSpans)
 		assert.Equal(t, 2, countRows(t, s, "spans"))
 	})
+}
+
+func point(hash uint64, start, ts time.Time, v int64) telemetry.MetricPoint {
+	return telemetry.MetricPoint{
+		TS: ts, StartTS: start, Project: "p1", Service: "api", Name: "jobs",
+		Type: telemetry.TypeSum, Temporality: telemetry.TemporalityCumulative, Monotonic: true,
+		SeriesHash: hash, ValueInt: &v,
+	}
+}
+
+func TestWriterDropsDuplicatePoints(t *testing.T) {
+	s, w := newWriter(t)
+	ts := time.Date(2026, 10, 1, 10, 0, 0, 0, time.UTC)
+	start := ts.Add(-time.Hour)
+	first := []telemetry.MetricPoint{
+		point(1, start, ts, 1),
+		point(1, start, ts.Add(time.Minute), 2),
+		point(2, time.Time{}, ts, 5), // no start time: NULL
+	}
+	stats, err := w.Write(t.Context(), telemetry.Batch{Points: first})
+	require.NoError(t, err)
+	assert.Equal(t, 3, stats.Rows)
+	assert.Zero(t, stats.DuplicatePoints)
+
+	repeated := point(2, time.Time{}, ts.Add(time.Minute), 6)
+	second := append(append([]telemetry.MetricPoint{}, first...), point(1, start, ts.Add(2*time.Minute), 3), repeated, repeated)
+	stats, err = w.Write(t.Context(), telemetry.Batch{Points: second})
+	require.NoError(t, err)
+	assert.Equal(t, 2, stats.Rows)
+	assert.Equal(t, 4, stats.DuplicatePoints)
+	assert.Zero(t, stats.DuplicateSpans)
+	assert.Equal(t, 5, countRows(t, s, "metric_points"))
+}
+
+func TestWriterPointDedupKeysOnStartTS(t *testing.T) {
+	s, w := newWriter(t)
+	ts := time.Date(2026, 10, 1, 10, 0, 0, 0, time.UTC)
+	_, err := w.Write(t.Context(), telemetry.Batch{Points: []telemetry.MetricPoint{point(1, ts.Add(-time.Hour), ts, 1)}})
+	require.NoError(t, err)
+
+	stats, err := w.Write(t.Context(), telemetry.Batch{Points: []telemetry.MetricPoint{point(1, ts.Add(-time.Minute), ts, 1)}})
+	require.NoError(t, err)
+	assert.Equal(t, 1, stats.Rows)
+	assert.Zero(t, stats.DuplicatePoints)
+	assert.Equal(t, 2, countRows(t, s, "metric_points"))
+}
+
+// A converted point keeps only microseconds, the hot table's resolution, so
+// a retry of a request whose timestamps carry nanoseconds is still caught.
+func TestWriterPointDedupMicroseconds(t *testing.T) {
+	_, w := newWriter(t)
+	ts := time.Date(2026, 10, 1, 10, 0, 0, 123456789, time.UTC)
+	req := &metricspb.MetricsData{ResourceMetrics: []*metricspb.ResourceMetrics{{
+		ScopeMetrics: []*metricspb.ScopeMetrics{{Metrics: []*metricspb.Metric{{
+			Name: "jobs",
+			Data: &metricspb.Metric_Sum{Sum: &metricspb.Sum{
+				IsMonotonic:            true,
+				AggregationTemporality: metricspb.AggregationTemporality_AGGREGATION_TEMPORALITY_CUMULATIVE,
+				DataPoints: []*metricspb.NumberDataPoint{{
+					StartTimeUnixNano: uint64(ts.Add(-time.Hour).UnixNano()),
+					TimeUnixNano:      uint64(ts.UnixNano()),
+					Value:             &metricspb.NumberDataPoint_AsInt{AsInt: 3},
+				}},
+			}},
+		}}}},
+	}}}
+	for i, wantDup := range []int{0, 1} {
+		stats, err := w.Write(t.Context(), otlp.ConvertMetrics(req, "p1").Batch())
+		require.NoError(t, err)
+		assert.Equal(t, wantDup, stats.DuplicatePoints, "write %d", i)
+	}
 }

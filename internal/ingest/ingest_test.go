@@ -228,12 +228,13 @@ func (s statsWriter) Write(context.Context, telemetry.Batch) (duckdb.CommitStats
 	return duckdb.CommitStats(s), nil
 }
 
-func TestDuplicateSpansCounted(t *testing.T) {
-	in := start(t, statsWriter{Rows: 2, Duplicates: 1}, ingest.DefaultConfig)
+func TestDuplicatesCounted(t *testing.T) {
+	in := start(t, statsWriter{Rows: 2, DuplicateSpans: 1, DuplicatePoints: 3}, ingest.DefaultConfig)
 
 	require.NoError(t, in.Submit(t.Context(), logs(3)))
 
 	st := in.Stats()
 	assert.Equal(t, int64(1), st.DuplicateSpans)
+	assert.Equal(t, int64(3), st.DuplicatePoints)
 	assert.Equal(t, int64(2), st.AcceptedRows)
 }
