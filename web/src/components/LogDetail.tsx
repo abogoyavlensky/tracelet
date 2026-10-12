@@ -70,20 +70,53 @@ export function LogDetail({ log, project }: { log: Log; project: string | undefi
 }
 
 export function CopyButton({ text, label = 'Copy as JSON' }: { text: string; label?: string }) {
-  const [copied, setCopied] = useState(false)
+  const [state, setState] = useState<'idle' | 'copied' | 'failed'>('idle')
   return (
     <button
       type="button"
       onClick={() => {
-        void navigator.clipboard.writeText(text).then(() => {
-          setCopied(true)
-          setTimeout(() => setCopied(false), 1500)
+        void copyText(text).then((ok) => {
+          setState(ok ? 'copied' : 'failed')
+          setTimeout(() => setState('idle'), 2000)
         })
       }}
       className="inline-flex h-9 items-center gap-2 rounded-md border border-line px-3.5 text-sm hover:bg-raised"
     >
       <icons.copy size={15} />
-      {copied ? 'Copied' : label}
+      {state === 'copied'
+        ? 'Copied'
+        : state === 'failed'
+          ? 'Copy failed: select and copy by hand'
+          : label}
     </button>
   )
+}
+
+/**
+ * Copies text. The Clipboard API needs a secure context (HTTPS or
+ * localhost), so plain HTTP on a LAN address falls back to a hidden textarea.
+ */
+async function copyText(text: string): Promise<boolean> {
+  try {
+    if (navigator.clipboard?.writeText) {
+      await navigator.clipboard.writeText(text)
+      return true
+    }
+  } catch {
+    // Permission denied; try the fallback.
+  }
+  const area = document.createElement('textarea')
+  area.value = text
+  area.setAttribute('readonly', '')
+  area.style.position = 'fixed'
+  area.style.opacity = '0'
+  document.body.append(area)
+  area.select()
+  try {
+    return document.execCommand('copy')
+  } catch {
+    return false
+  } finally {
+    area.remove()
+  }
 }

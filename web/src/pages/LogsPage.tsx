@@ -2,8 +2,8 @@
 // the selected record in a pane beside the list.
 import { useInfiniteQuery, useQuery } from '@tanstack/react-query'
 import { useNavigate } from '@tanstack/react-router'
-import { useCallback, useState } from 'react'
-import { listServices, searchLogs } from '../api'
+import { useCallback, useMemo, useState } from 'react'
+import { type Log, listServices, searchLogs } from '../api'
 import { rangeNavigation } from '../components/AppShell'
 import { AttrFilter } from '../components/AttrFilter'
 import { FilterBar } from '../components/FilterBar'
@@ -38,25 +38,34 @@ export function LogsPage({ search }: { search: LogsSearch }) {
     enabled: !!project,
   })
 
-  const items = logs.data?.pages.flatMap((p) => p.items) ?? []
+  const items = useMemo(() => logs.data?.pages.flatMap((p) => p.items) ?? [], [logs.data])
   const resolved = logs.data?.pages[0]?.range
-  const [selected, setSelected] = useState<number | null>(null)
+  // The selection follows the record, not its position, so a refresh that
+  // brings in newer logs keeps the same record open (or closes the pane
+  // when it is gone).
+  const [selectedKey, setSelectedKey] = useState<string | null>(null)
+  const found = selectedKey === null ? -1 : items.findIndex((l) => logKey(l) === selectedKey)
+  const selected = found >= 0 ? found : null
+  const select = useCallback(
+    (i: number) => setSelectedKey(logKey(items[i])),
+    [items, setSelectedKey],
+  )
   // A new search starts with nothing selected.
   const key = JSON.stringify(logsApiParams(filters))
   const [seen, setSeen] = useState(key)
   if (key !== seen) {
     setSeen(key)
-    setSelected(null)
+    setSelectedKey(null)
   }
-  useListKeys(items.length, selected, setSelected)
-  const close = useCallback(() => setSelected(null), [setSelected])
+  useListKeys(items.length, selected, select)
+  const close = useCallback(() => setSelectedKey(null), [setSelectedKey])
 
   const set = (patch: Partial<LogsSearch>) =>
     void navigate({ to: '.', search: (prev: object) => ({ ...prev, ...patch }) } as never)
   const active = [search.service, search.environment, search.level, ...(search.attr ?? [])].filter(
     Boolean,
   ).length
-  const open = selected !== null && selected < items.length
+  const open = selected !== null
 
   return (
     <>
@@ -123,7 +132,7 @@ export function LogsPage({ search }: { search: LogsSearch }) {
             </EmptyState>
           ) : (
             <>
-              <LogList logs={items} selected={selected} narrow={open} onSelect={setSelected} />
+              <LogList logs={items} selected={selected} narrow={open} onSelect={select} />
               <LoadMore
                 hasMore={!!logs.hasNextPage}
                 loading={logs.isFetchingNextPage}
@@ -141,4 +150,9 @@ export function LogsPage({ search }: { search: LogsSearch }) {
       </div>
     </>
   )
+}
+
+/** Logs have no ID; time, service, and body tell records apart in practice. */
+function logKey(log: Log): string {
+  return `${log.ts}\u0000${log.service}\u0000${log.body}`
 }
