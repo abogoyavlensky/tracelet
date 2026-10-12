@@ -3,12 +3,12 @@
 import { useInfiniteQuery, useQuery } from '@tanstack/react-query'
 import { useNavigate } from '@tanstack/react-router'
 import { useCallback, useMemo, useState } from 'react'
-import { type Log, listServices, searchLogs } from '../api'
+import { listServices, searchLogs } from '../api'
 import { rangeNavigation } from '../components/AppShell'
 import { AttrFilter } from '../components/AttrFilter'
 import { FilterBar } from '../components/FilterBar'
 import { LogDetail } from '../components/LogDetail'
-import { LogList } from '../components/LogList'
+import { LogList, logKey } from '../components/LogList'
 import { Pane, useListKeys } from '../components/Pane'
 import { SelectFilter } from '../components/SelectFilter'
 import { EmptyState, ErrorState, LoadMore, Loading } from '../components/States'
@@ -150,9 +150,4 @@ export function LogsPage({ search }: { search: LogsSearch }) {
       </div>
     </>
   )
-}
-
-/** Logs have no ID; time, service, and body tell records apart in practice. */
-function logKey(log: Log): string {
-  return `${log.ts}\u0000${log.service}\u0000${log.body}`
 }

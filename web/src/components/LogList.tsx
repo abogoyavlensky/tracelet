@@ -90,3 +90,8 @@ function LogRow({
     </li>
   )
 }
+
+/** Logs have no ID; time, span, service, and body tell records apart in practice. */
+export function logKey(log: Log): string {
+  return `${log.ts}\u0000${log.span_id ?? ''}\u0000${log.service}\u0000${log.body}`
+}

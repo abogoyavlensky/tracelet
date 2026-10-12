@@ -2,7 +2,7 @@
 // screens; on phones each span is a name line above a full-width track.
 import { useEffect, useRef } from 'react'
 import { formatDuration } from '../format'
-import type { WaterfallRow } from '../waterfall'
+import { type WaterfallRow, visibleRows } from '../waterfall'
 import { icons } from './icons'
 import { seriesBg } from './tones'
 
@@ -28,6 +28,7 @@ export function Waterfall({
   const nameCol = narrow ? 'minmax(200px,40%)' : 'minmax(260px,32%)'
   return (
     <>
+      {/* Wide screens: collapsible name tree beside a hairline time grid. */}
       <div className="relative hidden md:block">
         <div
           className="sticky top-0 z-[1] grid border-b border-line bg-surface text-[11px] text-muted"
@@ -62,7 +63,7 @@ export function Waterfall({
               ))}
             </span>
           </div>
-          {rows.map((r) => (
+          {visibleRows(rows, collapsed).map((r) => (
             <WideRow
               key={r.span.span_id}
               row={r}
@@ -75,6 +76,7 @@ export function Waterfall({
           ))}
         </div>
       </div>
+      {/* Phones list every span: there is no collapse control at this size. */}
       <ul className="md:hidden">
         {rows.map((r) => (
           <PhoneRow

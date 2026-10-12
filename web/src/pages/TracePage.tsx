@@ -184,7 +184,7 @@ export function TracePage({ traceId, search }: { traceId: string; search: TraceS
           aria-label="Waterfall"
         >
           <Waterfall
-            rows={shown}
+            rows={rows}
             durationNs={t.duration_ns}
             selected={selectedId}
             narrow={open}

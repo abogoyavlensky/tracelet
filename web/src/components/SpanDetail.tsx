@@ -14,6 +14,7 @@ import {
 import { rangeAround } from '../timeRange'
 import { KeyValues } from './KeyValues'
 import { LogDetail } from './LogDetail'
+import { logKey } from './LogList'
 import { LoadMore } from './States'
 import { severityBg } from './tones'
 
@@ -169,7 +170,9 @@ function RelatedLogs({
   traceStart: string
 }) {
   const [onlySpan, setOnlySpan] = useState(false)
-  const [open, setOpen] = useState<number | null>(null)
+  // The expanded log follows the record, so loading older logs or switching
+  // the filter never swaps it for another.
+  const [open, setOpen] = useState<string | null>(null)
   const shown = onlySpan ? related.logs.filter((l) => l.span_id === span.span_id) : related.logs
   return (
     <section className="mt-7">
@@ -221,12 +224,12 @@ function RelatedLogs({
         </p>
       ) : (
         <ul className="divide-y divide-line/70 overflow-hidden rounded-lg border border-line">
-          {shown.map((l, i) => (
-            <li key={`${l.ts}-${i}`}>
+          {shown.map((l) => (
+            <li key={logKey(l)}>
               <button
                 type="button"
-                aria-expanded={open === i}
-                onClick={() => setOpen(open === i ? null : i)}
+                aria-expanded={open === logKey(l)}
+                onClick={() => setOpen(open === logKey(l) ? null : logKey(l))}
                 className="flex w-full items-start gap-2 px-3 py-2 text-left hover:bg-raised/60"
               >
                 <span
@@ -241,7 +244,7 @@ function RelatedLogs({
                   +{formatDuration(Math.max(0, nsSince(traceStart, l.ts)))}
                 </span>
               </button>
-              {open === i && (
+              {open === logKey(l) && (
                 <div className="border-t border-line/70 bg-canvas/40">
                   <LogDetail log={l} project={project} hideTraceLink />
                 </div>
