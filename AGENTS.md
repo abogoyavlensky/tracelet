@@ -20,6 +20,10 @@ both Go and the frontend.
 - Frontend: `web/` is a Vite project (React, TypeScript, Tailwind v4, TanStack
   Query). It builds into `internal/web/dist`, which Go embeds. Keep
   `internal/web/dist/.gitkeep`; the Vite config recreates it after each build.
+  Logic that can be wrong silently (time ranges, URL search params, the
+  waterfall) lives in plain modules in `web/src/` with vitest tests;
+  components in `web/src/components/`, pages in `web/src/pages/`. Colours are
+  semantic tokens in `web/src/index.css`; never use raw palette classes.
 - API routes live under `/api/v1/`; OTLP receivers live under `/v1/`:
   `/v1/logs` and `/v1/traces` (SDKs append them to the endpoint themselves),
   sharing one handler in `internal/httpapi/otlp.go`; everything else is the

@@ -1,6 +1,6 @@
 # Tracelet design
 
-Status: initial technical design, 7 October 2026. This document records the chosen implementation direction for the vision in [VISION.md](VISION.md). Decisions marked **decided** are the plan unless phase 0 measurements contradict them. Everything else is a candidate. Phase 0 measured the storage layout on 8 October 2026; see [the storage spike results](spikes/storage.md). Phase 1 slice 1 (10 October 2026, [plan](plans/2026-10-10-1027-logs-slice.md)) built the storage layer, projects and tokens, OTLP/HTTP logs ingestion, logs search, and the CLI for them. Phase 1 slice 2 (11 October 2026, [plan](plans/2026-10-11-0858-traces-slice.md)) added OTLP/HTTP traces ingestion with span deduplication, trace lookup by ID, span search, and their CLI commands. Packaging shipped on 11 October 2026 ([plan](plans/2026-10-11-2111-release-and-deploy.md)): a Docker image and Linux release binaries on version tags, the CLI-only build, and a deploy of every master push; see [operations](operations.md). Nothing else here has been built yet.
+Status: initial technical design, 7 October 2026. This document records the chosen implementation direction for the vision in [VISION.md](VISION.md). Decisions marked **decided** are the plan unless phase 0 measurements contradict them. Everything else is a candidate. Phase 0 measured the storage layout on 8 October 2026; see [the storage spike results](spikes/storage.md). Phase 1 slice 1 (10 October 2026, [plan](plans/2026-10-10-1027-logs-slice.md)) built the storage layer, projects and tokens, OTLP/HTTP logs ingestion, logs search, and the CLI for them. Phase 1 slice 2 (11 October 2026, [plan](plans/2026-10-11-0858-traces-slice.md)) added OTLP/HTTP traces ingestion with span deduplication, trace lookup by ID, span search, and their CLI commands. Packaging shipped on 11 October 2026 ([plan](plans/2026-10-11-2111-release-and-deploy.md)): a Docker image and Linux release binaries on version tags, the CLI-only build, and a deploy of every master push; see [operations](operations.md). Phase 1 slice 3 (12 October 2026, [plan](plans/2026-10-12-1216-explore-ui.md)) added the web UI: token sign-in with a session cookie, the logs explorer, the traces list, and the trace page with its waterfall, span details, and related logs. Nothing else here has been built yet.
 
 ## Architecture
 
@@ -173,7 +173,9 @@ Four views, in priority order:
 - **Trace:** waterfall, span details, related logs.
 - **Dashboards:** saved panels with shared time range and filters.
 
-Filters are project, service, environment, and release everywhere. Investigation state is encoded in URLs with absolute time ranges. A shareable URL never bypasses authentication.
+Filters are project, service, environment, and release everywhere. Investigation state is encoded in URLs. An explorer URL may carry a relative range (`last=1h`), so a bookmark means "the last hour"; every link between views (a log to its trace, a trace to its logs) carries an absolute range, so following one is reproducible. A shareable URL never bypasses authentication.
+
+**Explore UI (built, phase 1 slice 3).** A top header (project, Logs and Traces, time range, refresh, health, theme, account) above full-width lists under a full-width filter bar. Selecting a record or span opens a detail pane beside the list; the list only narrows. The trace page draws the waterfall against a time grid and opens on the first failed span. Phones get a bottom tab bar and a list-to-detail flow. Light is the default theme and dark is a stored choice; colours are semantic tokens, so components never use raw palette values. The header becomes an icon rail when phase 2 adds more views.
 
 Dashboards start with time series, stat values, tables, and histograms. Panel definitions are versioned JSON holding signal and metric selection, filters, grouping, aggregation, units, visualisation settings, and layout. Import and export through the API and CLI. Layout is a simple CSS grid first; draggable layout is evaluated later.
 
@@ -228,7 +230,9 @@ Ingestion is protected by request limits, per-project quotas, and credential sco
 
 A single instance cannot alert on its own host failing. An external heartbeat monitor complements Tracelet where that matters.
 
-**UI bootstrap (decided).** On first start with no admin, the server prints a one-time setup URL to stdout. Visiting it creates the admin user. The UI uses a session cookie; the API uses bearer tokens. The setup URL arrives with the UI slice. Until then the server bootstraps for the CLI (decided, phase 1): with no active admin token it creates one and prints it once to stderr, or stores the hash of `TRACELET_ADMIN_TOKEN` for containers. Bootstrap runs last at startup, so a start that fails cannot store a token it never printed.
+**UI sign-in (decided, phase 1 slice 3).** The UI signs in with an existing `admin` or `read` token; there is no setup URL and no user account. This amends the earlier decided bootstrap, in which a setup URL created an admin user, at the owner's request: tokens already exist, and a single-owner tool gains nothing from a second kind of credential. User accounts can come later if they are ever needed. `POST /api/v1/session` checks the token and sets the `tracelet_session` cookie to it: `HttpOnly`, `SameSite=Strict`, `Path=/api/`, 30 days, and `Secure` over HTTPS (directly or through `X-Forwarded-Proto`). Revoking the token ends the session, so there is no session state on the server. The cookie authenticates only routes under `/api/`; OTLP ignores it, and non-safe cross-origin requests carrying it are refused (`http.CrossOriginProtection`). Ingest tokens cannot sign in. The recommended practice is one token per browser (`tracelet tokens create --scope read --name laptop`), so one device can be revoked without touching the others.
+
+**Server bootstrap (decided, phase 1).** With no active admin token the server creates one and prints it once to stderr, or stores the hash of `TRACELET_ADMIN_TOKEN` for containers. Bootstrap runs last at startup, so a start that fails cannot store a token it never printed.
 
 **Tokens (decided, phase 1).** `tl_` plus 40 hex characters, sent only as `Authorization: Bearer`. SQLite stores the SHA-256 and a 6-character prefix for listing. Scopes are `ingest` (one project, write only), `read` (one project, or all), and `admin` (everything). Telemetry rows store the project's immutable random ID; the API and CLI speak slugs, so renaming a slug never touches telemetry.
 
@@ -238,7 +242,7 @@ A single instance cannot alert on its own host failing. An external heartbeat mo
 | --- | --- |
 | Backend | Go, standard library HTTP, explicit SQL |
 | Telemetry transport | OTLP/HTTP protobuf and JSON, gzip; gRPC later if needed |
-| Frontend | React, TypeScript, Vite, TanStack Query |
+| Frontend | React, TypeScript, Vite, TanStack Query, TanStack Router, Tailwind |
 | Charts | uPlot for time series (decided); other panel types evaluated in the UI prototype |
 | Dashboard layout | CSS grid first; react-grid-layout evaluated later |
 | API description | OpenAPI |
@@ -296,6 +300,9 @@ Phases 1 to 4 follow the vision. Each feature ships with API and CLI access. Sco
 | Charts | uPlot | Small, fast, proven for time series in Grafana |
 | Error grouping | Phase 2 | Most common first question; cheap once logs and spans exist |
 | Heartbeats | Phase 1 | Stated purpose; small feature |
+| UI sign-in | An existing admin or read token in an HttpOnly cookie; one token per browser | No users table or sessions table; revoking a token signs its browser out; amends the setup-URL bootstrap at the owner's request |
+| UI layout and theme | Top header, full-width lists, detail pane on selection; light default with a stored dark choice; semantic colour tokens | Chosen from four screenshotted variants; scanning wants full width, reading wants a pane beside the list |
+| Frontend routing | TanStack Router, code-based routes, plain query strings | Typed search params for URL-encoded investigation state, without a router plugin or codegen |
 
 ## References
 

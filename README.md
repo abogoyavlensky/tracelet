@@ -7,8 +7,8 @@ executable with one data directory. See [docs/VISION.md](docs/VISION.md) for the
 direction and [docs/DESIGN.md](docs/DESIGN.md) for the technical design.
 
 Status: early. Tracelet ingests **logs and traces** so far, over OTLP/HTTP with
-protobuf encoding, and searches them through the HTTP API and the CLI. Metrics,
-the UI, and everything else in the vision come later.
+protobuf encoding, and searches them through a web UI, the HTTP API, and the
+CLI. Metrics and everything else in the vision come later.
 
 ## Install
 
@@ -71,7 +71,21 @@ check covers the current and previous hour, which are still in DuckDB; a retry
 arriving after its hour was flushed to Parquet is stored twice. Logs are not
 deduplicated. Span `trace_state` and `flags` are not stored.
 
-Search logs:
+Open the server in a browser (`http://localhost:8080`) and sign in with a
+token. Create one for each browser, so a lost device can be revoked without
+touching the others; a `read` token is enough to explore:
+
+```sh
+tracelet tokens create --scope read --name laptop
+# prints tl_... once: paste it on the sign-in page
+```
+
+The browser keeps the token in an `HttpOnly` cookie. The admin token works too,
+but it is better kept for the CLI. The UI has a logs explorer, a traces list,
+and a trace page with the waterfall, span details, and the trace's logs; every
+view's filters and time range live in its URL.
+
+Search logs from the CLI:
 
 ```sh
 tracelet logs search --project shop --service api --level error --last 30m
