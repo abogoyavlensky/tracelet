@@ -493,3 +493,40 @@ func TestMetricQueryErrors(t *testing.T) {
 	assert.ErrorAs(t, run(query.MetricQueryParams{}), &verr, "no name")
 	assert.ErrorAs(t, run(query.MetricQueryParams{Name: "jobs", Service: "a", Step: time.Second}), &verr, "bad step")
 }
+
+// Integer counters are subtracted as integers: past 2^53 a double cannot
+// tell consecutive values apart.
+func TestCounterIntegerPrecision(t *testing.T) {
+	t.Parallel()
+	storages(t, func(t *testing.T, cold bool) {
+		old := mt0.Add(-time.Hour)
+		big := func(ts time.Time, v int64) telemetry.MetricPoint {
+			p := counterPoint(1, ts, old, 0, true)
+			p.ValueInt = &v
+			return p
+		}
+		snap := withPoints(t, cold, big(minute(0), 1<<53), big(minute(1), 1<<53+1), big(minute(2), 1<<53+3))
+		res := metricQuery(t, snap, query.MetricQueryParams{Name: "jobs", Aggregate: "increase", Range: query.Range{From: minute(1), To: minute(3)}})
+		assertValues(t, []any{1.0, 2.0}, res.Series[0])
+	})
+}
+
+// A group whose only point has no predecessor still appears, all null.
+func TestGroupWithoutDeltasIsKept(t *testing.T) {
+	t.Parallel()
+	storages(t, func(t *testing.T, cold bool) {
+		old := mt0.Add(-time.Hour)
+		lone := counterPoint(2, minute(2), old, 50, true)
+		lone.Service = "worker"
+		snap := withPoints(t, cold,
+			counterPoint(1, minute(1), old, 10, true),
+			counterPoint(1, minute(2), old, 20, true),
+			lone,
+		)
+		res := metricQuery(t, snap, query.MetricQueryParams{Name: "jobs", Aggregate: "increase", GroupBy: "service", Range: query.Range{From: minute(1), To: minute(3)}})
+		groups := byGroup(t, res, "service")
+		require.Len(t, groups, 2)
+		assertValues(t, []any{nil, 10.0}, groups["svc-01"])
+		assertValues(t, []any{nil, nil}, groups["worker"])
+	})
+}

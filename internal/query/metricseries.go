@@ -63,19 +63,22 @@ type MetricResult struct {
 // difference from the previous point, element-wise for buckets; a bounds
 // change without a reset nulls only the bucket delta, because count and sum
 // do not depend on the buckets. Delta-temporality points are used as they
-// are. Only deltas at or after the range start are kept.
+// are. Integer values are subtracted as integers and converted after, so a
+// counter past 2^53 keeps its increments. Only deltas at or after the range
+// start are kept.
 //
 // Placeholders in textual order: the group expression's, the source's, the
 // filter's, the start of the rows read (is_fresh), and the range start.
 const deltasCTE = `pts AS (
   SELECT series_hash, ts, start_ts, temporality, bucket_bounds, %s AS grp,
-         coalesce(value_double, value_int::DOUBLE) AS v,
+         value_int::HUGEINT AS vi, value_double AS vd,
          "count"::BIGINT AS c, "sum" AS s, bucket_counts::BIGINT[] AS b
   FROM %s
   WHERE %s
 ),
 lagged AS (
-  SELECT *, lag(ts) OVER w AS prev_ts, lag(start_ts) OVER w AS prev_start, lag(v) OVER w AS prev_v,
+  SELECT *, lag(ts) OVER w AS prev_ts, lag(start_ts) OVER w AS prev_start,
+         lag(vi) OVER w AS prev_vi, lag(vd) OVER w AS prev_vd,
          lag(c) OVER w AS prev_c, lag(s) OVER w AS prev_s, lag(b) OVER w AS prev_b,
          lag(bucket_bounds) OVER w AS prev_bounds
   FROM pts
@@ -84,14 +87,16 @@ lagged AS (
 classified AS (
   SELECT *, temporality = 1 AS is_delta,
          prev_ts IS NOT NULL AND (start_ts IS DISTINCT FROM prev_start
-           OR coalesce(v < prev_v, false) OR coalesce(c < prev_c, false)) AS is_reset,
+           OR coalesce(vi < prev_vi, false) OR coalesce(vd < prev_vd, false)
+           OR coalesce(c < prev_c, false)) AS is_reset,
          prev_ts IS NULL AND start_ts IS NOT NULL AND start_ts >= ? AS is_fresh,
          prev_ts IS NOT NULL AND bucket_bounds IS DISTINCT FROM prev_bounds AS bounds_changed
   FROM lagged
 ),
 deltas AS (
   SELECT grp, series_hash, ts, bucket_bounds,
-         CASE WHEN is_delta OR is_reset OR is_fresh THEN v ELSE v - prev_v END AS dv,
+         CASE WHEN is_delta OR is_reset OR is_fresh THEN coalesce(vi::DOUBLE, vd)
+              ELSE coalesce((vi - prev_vi)::DOUBLE, vd - prev_vd) END AS dv,
          CASE WHEN is_delta OR is_reset OR is_fresh THEN c ELSE c - prev_c END AS dc,
          CASE WHEN is_delta OR is_reset OR is_fresh THEN s ELSE s - prev_s END AS ds,
          CASE WHEN is_delta OR is_reset OR is_fresh THEN b
@@ -160,16 +165,19 @@ func MetricQuery(ctx context.Context, snap *Snapshot, p MetricQueryParams) (Metr
 	q.filter.add("type = ? AND monotonic = ? AND coalesce(unit, '') = ?", typeCode(q.kind), q.kind.Monotonic, q.kind.Unit)
 	q.groupExpr, q.groupArgs = groupExpression(p.GroupBy)
 
-	var groups map[string]*groupValues
+	groups, err := q.seedGroups(ctx, snap)
+	if err != nil {
+		return MetricResult{}, err
+	}
 	switch {
 	case q.kind.isCounter():
-		groups, err = q.counter(ctx, snap)
+		err = q.counter(ctx, snap, groups)
 	case q.kind.Type == KindHistogram && q.agg.Quantile > 0:
-		groups, err = q.quantiles(ctx, snap)
+		err = q.quantiles(ctx, snap, groups)
 	case q.kind.Type == KindHistogram:
-		groups, err = q.histogram(ctx, snap)
+		err = q.histogram(ctx, snap, groups)
 	default:
-		groups, err = q.gauge(ctx, snap)
+		err = q.gauge(ctx, snap, groups)
 	}
 	if err != nil {
 		return MetricResult{}, err
@@ -249,6 +257,34 @@ func groupExpression(groupBy string) (string, []any) {
 	}
 }
 
+const groupsSQL = `SELECT DISTINCT %s FROM %s WHERE %s AND ts >= ?`
+
+// seedGroups returns an empty entry for every group with points in the
+// range, so a group whose points yield no value still appears, all null.
+func (q *metricQuery) seedGroups(ctx context.Context, snap *Snapshot) (map[string]*groupValues, error) {
+	args := append([]any{}, q.groupArgs...)
+	args = append(args, q.srcArgs...)
+	args = append(args, q.filter.args...)
+	args = append(args, q.from)
+	rows, err := snap.QueryContext(ctx, fmt.Sprintf(groupsSQL, q.groupExpr, q.src, q.filter.clause()), args...)
+	if err != nil {
+		return nil, fmt.Errorf("metric groups %s: %w", q.p.Name, err)
+	}
+	defer rows.Close()
+	groups := map[string]*groupValues{}
+	for rows.Next() {
+		var grp string
+		if err := rows.Scan(&grp); err != nil {
+			return nil, fmt.Errorf("scan metric group: %w", err)
+		}
+		q.slot(groups, grp)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("metric groups %s: %w", q.p.Name, err)
+	}
+	return groups, nil
+}
+
 // deltas returns the WITH clause over the deltas and its arguments.
 func (q *metricQuery) deltas() (string, []any) {
 	args := append([]any{}, q.groupArgs...)
@@ -280,19 +316,18 @@ func (q *metricQuery) index(stepI int64) (int, bool) {
 }
 
 // collectSteps reads rows of (grp, step_i, value) into groups.
-func (q *metricQuery) collectSteps(ctx context.Context, snap *Snapshot, query string, args []any) (map[string]*groupValues, error) {
+func (q *metricQuery) collectSteps(ctx context.Context, snap *Snapshot, query string, args []any, groups map[string]*groupValues) error {
 	rows, err := snap.QueryContext(ctx, query, args...)
 	if err != nil {
-		return nil, fmt.Errorf("metric query %s: %w", q.p.Name, err)
+		return fmt.Errorf("metric query %s: %w", q.p.Name, err)
 	}
 	defer rows.Close()
-	groups := map[string]*groupValues{}
 	for rows.Next() {
 		var grp string
 		var stepI int64
 		var v sql.NullFloat64
 		if err := rows.Scan(&grp, &stepI, &v); err != nil {
-			return nil, fmt.Errorf("scan metric step: %w", err)
+			return fmt.Errorf("scan metric step: %w", err)
 		}
 		g := q.slot(groups, grp)
 		if i, ok := q.index(stepI); ok && v.Valid {
@@ -300,9 +335,9 @@ func (q *metricQuery) collectSteps(ctx context.Context, snap *Snapshot, query st
 		}
 	}
 	if err := rows.Err(); err != nil {
-		return nil, fmt.Errorf("metric query %s: %w", q.p.Name, err)
+		return fmt.Errorf("metric query %s: %w", q.p.Name, err)
 	}
-	return groups, nil
+	return nil
 }
 
 const counterSQL = `%s
@@ -311,9 +346,9 @@ FROM deltas
 GROUP BY grp, step_i`
 
 // counter is a monotonic sum's increase, or rate, per step.
-func (q *metricQuery) counter(ctx context.Context, snap *Snapshot) (map[string]*groupValues, error) {
+func (q *metricQuery) counter(ctx context.Context, snap *Snapshot, groups map[string]*groupValues) error {
 	with, args := q.deltas()
-	return q.collectSteps(ctx, snap, fmt.Sprintf(counterSQL, with, q.stepUS, q.perSecond()), args)
+	return q.collectSteps(ctx, snap, fmt.Sprintf(counterSQL, with, q.stepUS, q.perSecond()), args, groups)
 }
 
 // perSecond divides a step's sum by the step's length for rate.
@@ -331,13 +366,13 @@ GROUP BY grp, step_i`
 
 // histogram is a histogram's observation rate, or average, per step. The
 // average uses only points that carry a sum.
-func (q *metricQuery) histogram(ctx context.Context, snap *Snapshot) (map[string]*groupValues, error) {
+func (q *metricQuery) histogram(ctx context.Context, snap *Snapshot, groups map[string]*groupValues) error {
 	with, args := q.deltas()
 	expr := "sum(dc)::DOUBLE " + q.perSecond()
 	if q.agg.Name == AggAvg {
 		expr = "sum(ds) FILTER (WHERE ds IS NOT NULL) / nullif(sum(dc) FILTER (WHERE ds IS NOT NULL), 0)"
 	}
-	return q.collectSteps(ctx, snap, fmt.Sprintf(histogramSQL, with, q.stepUS, expr), args)
+	return q.collectSteps(ctx, snap, fmt.Sprintf(histogramSQL, with, q.stepUS, expr), args, groups)
 }
 
 const gaugeSQL = `WITH pts AS (
@@ -355,7 +390,7 @@ SELECT grp, step_i, %s(x) FROM per_series GROUP BY grp, step_i`
 // gauge reduces each series within a step, then combines the series of a
 // group: avg, min, and max with the same function; sum takes each series'
 // last point and adds them.
-func (q *metricQuery) gauge(ctx context.Context, snap *Snapshot) (map[string]*groupValues, error) {
+func (q *metricQuery) gauge(ctx context.Context, snap *Snapshot, groups map[string]*groupValues) error {
 	reduce := q.agg.Name + "(v)"
 	if q.agg.Name == AggSum {
 		reduce = "arg_max(v, ts)"
@@ -365,7 +400,7 @@ func (q *metricQuery) gauge(ctx context.Context, snap *Snapshot) (map[string]*gr
 	args = append(args, q.filter.args...)
 	args = append(args, q.from)
 	query := fmt.Sprintf(gaugeSQL, q.groupExpr, q.src, q.filter.clause(), q.stepUS, reduce, q.agg.Name)
-	return q.collectSteps(ctx, snap, query, args)
+	return q.collectSteps(ctx, snap, query, args, groups)
 }
 
 const bucketSumsSQL = `%s,
@@ -391,11 +426,11 @@ FROM step_sums s JOIN bound_groups b ON s.grp = b.grp AND s.bucket_bounds = b.bu
 // quantiles interpolates a quantile per step from the bucket deltas of each
 // group's merged bounds (see mergedBounds); series with other bounds are
 // counted, not merged.
-func (q *metricQuery) quantiles(ctx context.Context, snap *Snapshot) (map[string]*groupValues, error) {
+func (q *metricQuery) quantiles(ctx context.Context, snap *Snapshot, groups map[string]*groupValues) error {
 	with, args := q.deltas()
 	rows, err := snap.QueryContext(ctx, fmt.Sprintf(bucketSumsSQL, with, q.stepUS), args...)
 	if err != nil {
-		return nil, fmt.Errorf("metric query %s: %w", q.p.Name, err)
+		return fmt.Errorf("metric query %s: %w", q.p.Name, err)
 	}
 	defer rows.Close()
 
@@ -412,7 +447,7 @@ func (q *metricQuery) quantiles(ctx context.Context, snap *Snapshot) (map[string
 		var bounds, counts, series []any
 		var total float64
 		if err := rows.Scan(&grp, &stepI, &bounds, &counts, &series, &total); err != nil {
-			return nil, fmt.Errorf("scan histogram step: %w", err)
+			return fmt.Errorf("scan histogram step: %w", err)
 		}
 		b := floats(bounds)
 		key := fmt.Sprint(b)
@@ -423,10 +458,9 @@ func (q *metricQuery) quantiles(ctx context.Context, snap *Snapshot) (map[string
 		steps[grp] = append(steps[grp], stepCounts{step: stepI, bounds: key, counts: floats(counts)})
 	}
 	if err := rows.Err(); err != nil {
-		return nil, fmt.Errorf("metric query %s: %w", q.p.Name, err)
+		return fmt.Errorf("metric query %s: %w", q.p.Name, err)
 	}
 
-	groups := map[string]*groupValues{}
 	for grp, bg := range byGroup {
 		candidates := make([]bucketGroup, 0, len(bg))
 		for _, g := range bg {
@@ -449,16 +483,12 @@ func (q *metricQuery) quantiles(ctx context.Context, snap *Snapshot) (map[string
 			}
 		}
 	}
-	return groups, nil
+	return nil
 }
 
 // rank turns groups into series ordered by the sum of their values, then by
-// label, and caps them at MaxMetricSeries. An ungrouped query always has its
-// one series, empty when the range holds points but no values.
+// label, and caps them at MaxMetricSeries.
 func (q *metricQuery) rank(groups map[string]*groupValues) ([]MetricSeries, bool) {
-	if q.p.GroupBy == "" {
-		q.slot(groups, "")
-	}
 	type ranked struct {
 		label string
 		total float64
