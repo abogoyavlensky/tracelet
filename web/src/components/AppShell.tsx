@@ -18,6 +18,7 @@ import { useProject } from './useProject'
 const nav = [
   { to: '/logs', label: 'Logs', icon: icons.logs },
   { to: '/traces', label: 'Traces', icon: icons.trace },
+  { to: '/metrics', label: 'Metrics', icon: icons.metrics },
 ] as const
 
 export function AppShell() {
@@ -58,7 +59,8 @@ export function AppShell() {
 
 function Header({ session, project }: { session: Session; project: string | undefined }) {
   const pathname = useRouterState({ select: (s) => s.location.pathname })
-  const listPage = pathname === '/logs' || pathname === '/traces'
+  // Pages whose time range the header holds on wide screens.
+  const listPage = pathname === '/logs' || pathname === '/traces' || pathname.startsWith('/metrics')
   return (
     <header className="flex h-14 shrink-0 items-center gap-2 border-b border-line bg-surface px-3 md:gap-4 md:px-5">
       <Link
@@ -119,7 +121,11 @@ function ProjectPicker({ session, project }: { session: Session; project: string
           rememberProject(slug)
           // Filters and traces belong to the old project, so start fresh.
           void navigate({
-            to: pathname.startsWith('/traces') ? '/traces' : '/logs',
+            to: pathname.startsWith('/traces')
+              ? '/traces'
+              : pathname.startsWith('/metrics')
+                ? '/metrics'
+                : '/logs',
             search: { project: slug },
           })
         }}
@@ -266,7 +272,7 @@ function AccountMenu({ session }: { session: Session }) {
 function TabBar({ project }: { project: string | undefined }) {
   const pathname = useRouterState({ select: (s) => s.location.pathname })
   return (
-    <nav className="fixed inset-x-0 bottom-0 z-30 grid grid-cols-2 border-t border-line bg-surface pb-[env(safe-area-inset-bottom)] md:hidden">
+    <nav className="fixed inset-x-0 bottom-0 z-30 grid grid-cols-3 border-t border-line bg-surface pb-[env(safe-area-inset-bottom)] md:hidden">
       {nav.map((item) => (
         <Link
           key={item.to}

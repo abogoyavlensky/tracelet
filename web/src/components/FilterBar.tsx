@@ -1,5 +1,6 @@
 // The full-width filter row above a list. On phones the filters fold behind
-// a "Filters" button next to the search box and the time range.
+// a "Filters" button next to the search box and the time range. A page
+// without text search leaves out onQuery, and the box with it.
 import { type ReactNode, useEffect, useState } from 'react'
 import { icons } from './icons'
 
@@ -12,9 +13,9 @@ export function FilterBar({
   range,
   children,
 }: {
-  query: string
-  onQuery: (q: string) => void
-  placeholder: string
+  query?: string
+  onQuery?: (q: string) => void
+  placeholder?: string
   /** How many filters are set, shown on the phone's Filters button. */
   active: number
   summary: ReactNode
@@ -31,7 +32,11 @@ export function FilterBar({
         >
           {children}
         </div>
-        <SearchBox value={query} onChange={onQuery} placeholder={placeholder} />
+        {onQuery ? (
+          <SearchBox value={query ?? ''} onChange={onQuery} placeholder={placeholder ?? ''} />
+        ) : (
+          <span className="flex-1 md:hidden" />
+        )}
         <button
           type="button"
           aria-expanded={open}

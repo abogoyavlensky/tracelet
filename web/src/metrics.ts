@@ -88,3 +88,25 @@ export function lastValue(series: MetricSeries): number | null {
 export function incompatibleSeries(result: MetricResult): number {
   return result.series.reduce((n, s) => n + (s.incompatible_series ?? 0), 0)
 }
+
+/**
+ * Whether a series has a value with no neighbour on either side. Lines are
+ * not drawn across gaps, so such a value is invisible unless its point is.
+ */
+export function hasIsolatedValue(values: (number | null)[]): boolean {
+  return values.some(
+    (v, i) => v !== null && (values[i - 1] ?? null) === null && (values[i + 1] ?? null) === null,
+  )
+}
+
+function pad(n: number): string {
+  return String(n).padStart(2, '0')
+}
+
+/** An x-axis label: 24-hour local time, with the date when the chart spans days. */
+export function axisTime(epochSeconds: number, spanSeconds: number): string {
+  const d = new Date(epochSeconds * 1000)
+  const hm = `${pad(d.getHours())}:${pad(d.getMinutes())}`
+  if (spanSeconds <= 24 * 3600) return hm
+  return `${d.toLocaleDateString(undefined, { month: 'short', day: 'numeric' })} ${hm}`
+}

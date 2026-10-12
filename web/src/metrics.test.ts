@@ -3,6 +3,7 @@ import type { MetricResult } from './api'
 import {
   aggregateOptions,
   groupByOptions,
+  hasIsolatedValue,
   incompatibleSeries,
   kindLabel,
   lastValue,
@@ -88,5 +89,14 @@ describe('chart data', () => {
 
   it('sums incompatible histogram series', () => {
     expect(incompatibleSeries(result)).toBe(3)
+  })
+})
+
+describe('isolated values', () => {
+  it('finds a value with gaps on both sides', () => {
+    expect(hasIsolatedValue([null, 3, null])).toBe(true)
+    expect(hasIsolatedValue([3])).toBe(true)
+    expect(hasIsolatedValue([1, 2, null, 4, 5])).toBe(false)
+    expect(hasIsolatedValue([null, null])).toBe(false)
   })
 })
