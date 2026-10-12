@@ -9,6 +9,7 @@ import (
 	"io"
 	"log/slog"
 	"net/http"
+	"net/http/cookiejar"
 	"net/url"
 	"testing"
 	"time"
@@ -349,6 +350,41 @@ func TestEndToEnd(t *testing.T) {
 	assert.Equal(t, http.StatusForbidden, code, "a read token cannot ingest traces")
 	code, resp = s.call(http.MethodGet, "/api/v1/traces/ffffffffffffffffffffffffffffffff", readTok, "", nil)
 	assert.Equal(t, http.StatusNotFound, code, string(resp))
+
+	// A browser signs in with the admin token and then reads with only the
+	// session cookie, which OTLP does not accept.
+	jar, err := cookiejar.New(nil)
+	require.NoError(t, err)
+	browser := &http.Client{Jar: jar}
+	browse := func(method, path, contentType string, body []byte) (int, []byte) {
+		t.Helper()
+		req, err := http.NewRequestWithContext(t.Context(), method, s.base+path, bytes.NewReader(body))
+		require.NoError(t, err)
+		if contentType != "" {
+			req.Header.Set("Content-Type", contentType)
+		}
+		resp, err := browser.Do(req)
+		require.NoError(t, err)
+		defer resp.Body.Close()
+		data, err := io.ReadAll(resp.Body)
+		require.NoError(t, err)
+		return resp.StatusCode, data
+	}
+	code, resp = browse(http.MethodPost, "/api/v1/session", "application/json", []byte(`{"token":"`+adminToken+`"}`))
+	require.Equal(t, http.StatusOK, code, string(resp))
+	code, resp = browse(http.MethodGet, "/api/v1/logs?project=shop&last=1h", "", nil)
+	require.Equal(t, http.StatusOK, code, string(resp))
+	var cookieLogs struct {
+		Items []json.RawMessage `json:"items"`
+	}
+	require.NoError(t, json.Unmarshal(resp, &cookieLogs))
+	assert.NotEmpty(t, cookieLogs.Items)
+	code, _ = browse(http.MethodPost, "/v1/logs", "application/x-protobuf", body)
+	assert.Equal(t, http.StatusUnauthorized, code, "OTLP ignores the session cookie")
+	code, _ = browse(http.MethodDelete, "/api/v1/session", "", nil)
+	assert.Equal(t, http.StatusNoContent, code)
+	code, _ = browse(http.MethodGet, "/api/v1/session", "", nil)
+	assert.Equal(t, http.StatusUnauthorized, code, "signed out")
 
 	cancel()
 	select {

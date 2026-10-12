@@ -23,16 +23,25 @@ func tokenFrom(ctx context.Context) project.Token {
 	return t
 }
 
-// requireScope authenticates the bearer token and lets the request through
-// only when the token grants scope. The token rides on the request context
-// (request-scoped metadata) for the handler's project checks.
+// requireScope authenticates the request's credential and lets the request
+// through only when the token grants scope. The token rides on the request
+// context (request-scoped metadata) for the handler's project checks.
+//
+// A credential from the session cookie is a browser session, so a non-safe
+// cross-origin request carrying it is refused before the token is looked up.
 func (h *Handler) requireScope(scope project.Scope, next http.HandlerFunc) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
-		plaintext, ok := bearer(r)
+		plaintext, fromCookie, ok := credential(r)
 		if !ok {
 			w.Header().Set("WWW-Authenticate", `Bearer realm="tracelet"`)
 			writeError(w, http.StatusUnauthorized, "missing bearer token")
 			return
+		}
+		if fromCookie {
+			if err := h.crossOrigin.Check(r); err != nil {
+				writeError(w, http.StatusForbidden, err.Error())
+				return
+			}
 		}
 		tok, err := h.auth.Authenticate(r.Context(), plaintext)
 		if errors.Is(err, project.ErrUnauthorized) {
@@ -50,6 +59,23 @@ func (h *Handler) requireScope(scope project.Scope, next http.HandlerFunc) http.
 		}
 		next(w, r.WithContext(context.WithValue(r.Context(), tokenKey{}, tok)))
 	}
+}
+
+// credential reads the token from "Authorization: Bearer <token>", or, for
+// the management API only, from the session cookie. The bearer header wins
+// when both are present. OTLP routes never accept the cookie.
+func credential(r *http.Request) (plaintext string, fromCookie, ok bool) {
+	if token, ok := bearer(r); ok {
+		return token, false, true
+	}
+	if !strings.HasPrefix(r.URL.Path, "/api/") {
+		return "", false, false
+	}
+	c, err := r.Cookie(sessionCookieName)
+	if err != nil || c.Value == "" {
+		return "", false, false
+	}
+	return c.Value, true, true
 }
 
 // bearer reads the token from "Authorization: Bearer <token>".
