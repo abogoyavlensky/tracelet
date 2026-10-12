@@ -72,7 +72,7 @@ type MetricPoint struct {
 	Type         int16
 	Temporality  int16
 	Monotonic    bool
-	SeriesHash   uint64 // identifies the series: name, service, and sorted attributes
+	SeriesHash   uint64 // identifies the series: project, metric, scope, resource, and point attributes
 	Resource     string // JSON text
 	Attributes   string // JSON text
 	ValueInt     *int64
