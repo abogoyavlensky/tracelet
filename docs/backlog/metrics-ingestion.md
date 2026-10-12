@@ -1,7 +1,7 @@
 # Metrics are not ingested
 
-**Status: planned**
-Plan: docs/plans/2026-10-12-2159-metrics-slice.md
+**Status: done**
+Shipped on branch `metrics-slice` by `docs/plans/2026-10-12-2159-metrics-slice.md`: `POST /v1/metrics`, a series hash over the whole emitting context, writer deduplication, metric queries, `tracelet metrics`, and the Metrics view.
 
 ## Problem
 
