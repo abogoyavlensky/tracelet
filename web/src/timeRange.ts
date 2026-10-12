@@ -6,12 +6,12 @@ import { epochMs, formatShort, isRFC3339, nsSince } from './format'
 export type TimeRange = { last: string } | { from: string; to: string } | Record<string, never>
 
 export const presets = [
-  { label: '15m', last: '15m' },
-  { label: '1h', last: '1h' },
-  { label: '6h', last: '6h' },
-  { label: '24h', last: '24h' },
+  { label: '15m', last: '15m', name: 'Last 15 minutes' },
+  { label: '1h', last: '1h', name: 'Last hour' },
+  { label: '6h', last: '6h', name: 'Last 6 hours' },
+  { label: '24h', last: '24h', name: 'Last 24 hours' },
   // The API parses `last` with Go's time.ParseDuration, which has no days.
-  { label: '7d', last: '168h' },
+  { label: '7d', last: '168h', name: 'Last 7 days' },
 ] as const
 
 const goDurationPart = /(\d+)(?:\.(\d+))?(ns|us|µs|ms|s|m|h)/g
@@ -96,7 +96,7 @@ export function fromLocalInput(value: string): string | undefined {
 export function rangeLabel(r: TimeRange, fallback: string): string {
   if ('last' in r) {
     const preset = presets.find((p) => p.last === r.last)
-    return `Last ${preset?.label ?? r.last}`
+    return preset?.name ?? `Last ${r.last}`
   }
   if ('from' in r) return `${formatShort(r.from)} – ${formatShort(r.to)}`
   return fallback

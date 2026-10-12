@@ -10,6 +10,8 @@ import {
   redirect,
 } from '@tanstack/react-router'
 import { ApiError } from './api'
+import { AppShell } from './components/AppShell'
+import { LoginPage } from './pages/LoginPage'
 import { Placeholder } from './pages/Placeholder'
 import {
   parseSearchString,
@@ -35,8 +37,16 @@ export const loginRoute = createRoute({
     const next = safeNext(raw.next)
     return next ? { next } : {}
   },
+  // Already signed in: go where the sign-in would have led.
+  beforeLoad: async ({ context, search }) => {
+    const signedIn = await context.queryClient.ensureQueryData(sessionQuery).then(
+      () => true,
+      () => false,
+    )
+    if (signedIn) throw redirect({ href: search.next ?? '/logs' })
+  },
   component: function LoginRoute() {
-    return <Placeholder title="Sign in" data={loginRoute.useSearch()} />
+    return <LoginPage next={loginRoute.useSearch().next} />
   },
 })
 
@@ -55,7 +65,7 @@ export const appRoute = createRoute({
       throw error
     }
   },
-  component: Outlet,
+  component: AppShell,
 })
 
 const indexRoute = createRoute({
