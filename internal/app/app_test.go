@@ -18,6 +18,7 @@ import (
 	"github.com/stretchr/testify/require"
 	commonpb "go.opentelemetry.io/proto/otlp/common/v1"
 	logspb "go.opentelemetry.io/proto/otlp/logs/v1"
+	metricspb "go.opentelemetry.io/proto/otlp/metrics/v1"
 	resourcepb "go.opentelemetry.io/proto/otlp/resource/v1"
 	tracepb "go.opentelemetry.io/proto/otlp/trace/v1"
 	"google.golang.org/protobuf/proto"
@@ -160,6 +161,52 @@ func exportTrace(t *testing.T, start time.Time) traceExport {
 		traces: traces, logs: logs, traceID: hex.EncodeToString(traceID),
 		start: start, end: start.Add(200 * time.Millisecond),
 	}
+}
+
+// exportMetrics builds one metrics export at ts: the counter orders.created
+// from two replicas of api that differ only in service.instance.id, and a
+// duration histogram from the first replica. Every series started at start.
+func exportMetrics(t *testing.T, ts, start time.Time, orders [2]int64, buckets []uint64) []byte {
+	t.Helper()
+	cumulative := metricspb.AggregationTemporality_AGGREGATION_TEMPORALITY_CUMULATIVE
+	replica := func(instance string, value int64, metrics ...*metricspb.Metric) *metricspb.ResourceMetrics {
+		return &metricspb.ResourceMetrics{
+			Resource: &resourcepb.Resource{Attributes: []*commonpb.KeyValue{
+				{Key: "service.name", Value: str("api")},
+				{Key: "service.instance.id", Value: str(instance)},
+			}},
+			ScopeMetrics: []*metricspb.ScopeMetrics{{Metrics: append([]*metricspb.Metric{{
+				Name: "orders.created", Unit: "{order}",
+				Data: &metricspb.Metric_Sum{Sum: &metricspb.Sum{
+					IsMonotonic: true, AggregationTemporality: cumulative,
+					DataPoints: []*metricspb.NumberDataPoint{{
+						StartTimeUnixNano: uint64(start.UnixNano()), TimeUnixNano: uint64(ts.UnixNano()),
+						Value: &metricspb.NumberDataPoint_AsInt{AsInt: value},
+					}},
+				}},
+			}}, metrics...)}},
+		}
+	}
+	var count uint64
+	for _, b := range buckets {
+		count += b
+	}
+	histogram := &metricspb.Metric{
+		Name: "http.server.request.duration", Unit: "s",
+		Data: &metricspb.Metric_Histogram{Histogram: &metricspb.Histogram{
+			AggregationTemporality: cumulative,
+			DataPoints: []*metricspb.HistogramDataPoint{{
+				StartTimeUnixNano: uint64(start.UnixNano()), TimeUnixNano: uint64(ts.UnixNano()),
+				Count: count, ExplicitBounds: []float64{0.1, 0.5, 1}, BucketCounts: buckets,
+			}},
+		}},
+	}
+	body, err := proto.Marshal(&metricspb.MetricsData{ResourceMetrics: []*metricspb.ResourceMetrics{
+		replica("a", orders[0], histogram),
+		replica("b", orders[1]),
+	}})
+	require.NoError(t, err)
+	return body
 }
 
 func TestEndToEnd(t *testing.T) {
@@ -350,6 +397,82 @@ func TestEndToEnd(t *testing.T) {
 	assert.Equal(t, http.StatusForbidden, code, "a read token cannot ingest traces")
 	code, resp = s.call(http.MethodGet, "/api/v1/traces/ffffffffffffffffffffffffffffffff", readTok, "", nil)
 	assert.Equal(t, http.StatusNotFound, code, string(resp))
+
+	// An SDK with two replicas exports metrics twice a minute apart, and the
+	// second export is retried after a lost response.
+	now := time.Now()
+	first := exportMetrics(t, now.Add(-2*time.Minute), now.Add(-3*time.Minute), [2]int64{5, 7}, []uint64{1, 1, 0, 0})
+	second := exportMetrics(t, now.Add(-time.Minute), now.Add(-3*time.Minute), [2]int64{12, 10}, []uint64{2, 3, 1, 0})
+	for _, export := range [][]byte{first, second, second} {
+		code, resp = s.call(http.MethodPost, "/v1/metrics", ingestTok, "application/x-protobuf", export)
+		require.Equal(t, http.StatusOK, code, string(resp))
+		rejected, _, err = otlp.ParsePartialSuccess(resp)
+		require.NoError(t, err)
+		assert.Zero(t, rejected)
+	}
+
+	var metricsHealth struct {
+		Ingest struct {
+			AcceptedRows    int `json:"accepted_rows"`
+			DuplicatePoints int `json:"duplicate_points"`
+		} `json:"ingest"`
+	}
+	s.getJSON("/api/v1/health", "", &metricsHealth)
+	assert.Equal(t, 260, metricsHealth.Ingest.AcceptedRows, "254 earlier rows and 6 points")
+	assert.Equal(t, 3, metricsHealth.Ingest.DuplicatePoints)
+
+	var catalog struct {
+		Items []struct {
+			Name   string `json:"name"`
+			Type   string `json:"type"`
+			Series int    `json:"series"`
+		} `json:"items"`
+	}
+	s.getJSON("/api/v1/metrics", readTok, &catalog)
+	require.Len(t, catalog.Items, 2)
+	assert.Equal(t, "http.server.request.duration", catalog.Items[0].Name)
+	assert.Equal(t, "orders.created", catalog.Items[1].Name)
+	assert.Equal(t, 2, catalog.Items[1].Series, "two replicas are two series")
+
+	type metricResult struct {
+		Aggregate string `json:"aggregate"`
+		Series    []struct {
+			Values []*float64 `json:"values"`
+		} `json:"series"`
+	}
+	nonNull := func(r metricResult) []float64 {
+		var out []float64
+		for _, s := range r.Series {
+			for _, v := range s.Values {
+				if v != nil {
+					out = append(out, *v)
+				}
+			}
+		}
+		return out
+	}
+	// Every series started inside the query's view, so each first export
+	// counts in full: the increases add up to the replicas' last values.
+	var increase metricResult
+	s.getJSON("/api/v1/metrics/query?"+url.Values{
+		"name": {"orders.created"}, "aggregate": {"increase"}, "step": {"1m"}, "last": {"1h"},
+	}.Encode(), readTok, &increase)
+	var total float64
+	for _, v := range nonNull(increase) {
+		total += v
+	}
+	assert.InDelta(t, 22, total, 1e-9)
+
+	// Bucket deltas [1, 1, 0, 0] then [1, 2, 1, 0]: p50 is 0.1, then 0.3.
+	var p50 metricResult
+	s.getJSON("/api/v1/metrics/query?"+url.Values{
+		"name": {"http.server.request.duration"}, "aggregate": {"p50"}, "step": {"1m"}, "last": {"1h"},
+	}.Encode(), readTok, &p50)
+	assert.Equal(t, "p50", p50.Aggregate)
+	got := nonNull(p50)
+	require.Len(t, got, 2)
+	assert.InDelta(t, 0.1, got[0], 1e-9)
+	assert.InDelta(t, 0.3, got[1], 1e-9)
 
 	// A browser signs in with the admin token and then reads with only the
 	// session cookie, which OTLP does not accept.
