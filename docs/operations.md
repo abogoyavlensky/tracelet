@@ -132,3 +132,15 @@ Logs and state, from a machine with the SSH key:
 uc --context personal --connect root@<SERVER_IP> logs tracelet
 uc --context personal --connect root@<SERVER_IP> ls
 ```
+
+### First deploy
+
+12 October 2026, run 38217122035 (the merge of PR #5): the `deploy` job took
+3m38s including the tests, `uc deploy` created service `tracelet`, and the
+version check passed with `cee187f`. The instance reported `ready: true`, one
+completed flush and no `last_flush_error`, with no telemetry ingested yet, so
+the flush ran on empty hours. Peak container memory and flush behaviour under
+real load are not measured yet: nothing sends data, and the deploy machine had
+no uncloud access. Check `memory.peak` (`uc exec tracelet -- cat
+/sys/fs/cgroup/memory.peak`) and `last_flush_error` after the first services
+send logs, and raise the limits in `compose.yaml` if they show pressure.

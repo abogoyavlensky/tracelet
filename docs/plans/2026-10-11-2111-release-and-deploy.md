@@ -273,17 +273,29 @@ The only Go change is the `serve` split. `rite check`, now including `check-cli`
   Push the branch and open a PR to `master`, then link it with `link_pull_request`. The PR body lists the variables, secrets and DNS record from the design, under a "Before merging" heading.
   Expected: `ci` passes on both architectures, including the image smoke test.
 
-- [ ] **Step 2: Hand over to the owner**
+- [x] **Step 2: Hand over to the owner**
   Stop and ask the owner to:
   1. set the variables and secrets and the DNS record;
   2. optionally start a `release` dry run from the Actions tab;
   3. merge.
   Do not merge without the owner.
 
-- [ ] **Step 3: Watch the first deploy**
+- [x] **Step 3: Watch the first deploy**
   After the merge, watch with `gh run watch` on the `deploy` run. Expected: `uc deploy` creates service `tracelet`, and the version check passes. After the first hourly flush, check memory and flushing: `uc --context personal --connect root@<SERVER_IP> exec tracelet -- cat /sys/fs/cgroup/memory.peak`, or `docker stats --no-stream` on the server, plus `last_flush`/`last_flush_error` from the health endpoint. Record the run ID, the deploy job's duration, the peak memory, the ingest rate at the time, and anything surprising in `docs/operations.md` under a short "First deploy" note, in a follow-up commit on master or a small PR, as the owner prefers.
 
 - [ ] **Step 4: First release, only if the owner asks for it**
   `git tag v0.1.0 && git push origin v0.1.0`, then watch `release`. Expected: ghcr has `0.1.0`, `0.1` and `latest` as an index of `linux/amd64` and `linux/arm64`. The release has six tarballs (four CLI, two server) and `checksums.txt`, and the downloaded server amd64 binary's `version` prints `v0.1.0`. Check the package is public by pulling it anonymously, logged out of ghcr: `docker logout ghcr.io; docker pull ghcr.io/abogoyavlensky/tracelet:0.1.0`. If the pull is denied, ask the owner to set the package's visibility to public under its package settings. Check that mise installs the release on Linux: `MISE_DATA_DIR=$(mktemp -d) mise exec github:abogoyavlensky/tracelet@0.1.0 -- tracelet version` prints `v0.1.0`, and `tracelet serve` under the same `mise exec` prints the CLI-only error. That proves mise picked the CLI, not the server tarball.
 
-> Status: Tasks 1-6 done and each reviewed with codex (no must-fix findings; one advisory on Task 3: removing the master push trigger before `deploy.yml` exists, resolved by Task 5 in the same PR). PR #5 is open and `ci` passes on both architectures, including the image smoke test. Steps 2-4 wait for the owner: variables, secrets, DNS, merge, then the first deploy and release.
+> Status: Tasks 1-7 done except Step 4 (the first release), which waits for the owner to ask. PR #5 merged and the first deploy succeeded (run 38217122035, 3m38s); `https://tracelet.absky.dev/api/v1/health` reports `cee187f`, and the admin token authenticates against the live API. Peak memory is unmeasured: the agent has no uncloud access. See "First deploy" in `docs/operations.md`.
+
+## Summary
+
+Implemented: the Docker image and smoke test (`Dockerfile`, `scripts/docker-smoke.sh`, `rite docker`); the CLI-only build behind a `cli` build tag (`rite build-cli`, `rite check-cli` in `rite check`); `ci.yml` as a reusable workflow that builds and smoke-tests the shipped binary per architecture; `release.yml` (tags, with a dry run); `compose.yaml` and `deploy.yml` (every master push, with a version check); documentation in `docs/operations.md`, the README, DESIGN and AGENTS.
+
+Issues: the offline compose check hit the `/tmp` quota (worked around with `GOTMPDIR`); a stale codex report file nearly passed for a review (fixed by deleting it before each run).
+
+Deviations: `uc version` instead of `uc --version`; the version-check loop uses `_`; an `ADMIN_TOKEN` guard in the deploy step (`printenv` passes an empty secret); the plan file is committed on the branch.
+
+Not done: the first release (`v0.1.0`, Step 4) and the peak-memory measurement.
+
+Plan could have specified better: the actionlint-clean loop, the `ADMIN_TOKEN` guard (an empty secret does not fail "loudly"), and who measures memory when the agent has no server access.
