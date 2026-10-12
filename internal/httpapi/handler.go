@@ -102,6 +102,7 @@ func NewHandler(deps Deps) *API {
 	a.handle("GET /api/v1/spans", h.requireScope(project.ScopeRead, h.searchSpans))
 	a.handle("POST /v1/logs", h.requireScope(project.ScopeIngest, h.otlpLogs))
 	a.handle("POST /v1/traces", h.requireScope(project.ScopeIngest, h.otlpTraces))
+	a.handle("POST /v1/metrics", h.requireScope(project.ScopeIngest, h.otlpMetrics))
 	// Unknown paths under the API prefixes are JSON 404s, not the frontend.
 	a.mux.HandleFunc("/api/", h.notFound)
 	a.mux.HandleFunc("/v1/", h.notFound)

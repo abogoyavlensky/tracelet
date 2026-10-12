@@ -100,6 +100,46 @@ paths:
         "415": { $ref: "#/components/responses/Error" }
         "503": { $ref: "#/components/responses/Unavailable" }
 
+  /v1/metrics:
+    post:
+      summary: Ingest OTLP/HTTP metrics
+      description: |
+        An OTLP `ExportMetricsServiceRequest` in protobuf, optionally gzipped.
+        Needs an `ingest` token. The body may be at most 4 MB, before and
+        after decompression. A 200 means the points are stored. Gauges, sums,
+        and explicit-bucket histograms are accepted. Exponential histograms,
+        summaries, delta up-down counters, and invalid points are rejected
+        and named in `partial_success`. A point whose series, start time, and
+        time are already stored in the hot window is dropped and counted as
+        `duplicate_points` on health. Exemplars are not stored. OTLP/JSON is
+        not supported yet and gets 415.
+      operationId: ingestMetrics
+      security:
+        - bearer: []
+      parameters:
+        - name: Content-Encoding
+          in: header
+          schema: { type: string, enum: [gzip, identity] }
+      requestBody:
+        required: true
+        content:
+          application/x-protobuf:
+            schema: { type: string, format: binary }
+      responses:
+        "200":
+          description: |
+            An `ExportMetricsServiceResponse`; its `partial_success` names
+            rejected data points and the reason.
+          content:
+            application/x-protobuf:
+              schema: { type: string, format: binary }
+        "400": { $ref: "#/components/responses/Error" }
+        "401": { $ref: "#/components/responses/Error" }
+        "403": { $ref: "#/components/responses/Error" }
+        "413": { $ref: "#/components/responses/Error" }
+        "415": { $ref: "#/components/responses/Error" }
+        "503": { $ref: "#/components/responses/Unavailable" }
+
   /api/v1/health:
     get:
       summary: Server health and counters
@@ -679,6 +719,7 @@ components:
             rejected_rows: { type: integer }
             unknown_service_records: { type: integer }
             duplicate_spans: { type: integer, description: Spans dropped because the same span was already stored in the hot window. }
+            duplicate_points: { type: integer, description: Metric points dropped because the same point was already stored in the hot window. }
             overloaded_requests: { type: integer }
             commits: { type: integer }
             failed_commits: { type: integer }
