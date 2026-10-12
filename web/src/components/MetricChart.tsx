@@ -33,7 +33,11 @@ function useThemeColors(): Colors {
 
 const separator = '\u0000'
 
-/** X-axis tick spacings in seconds, from a minute to a week. */
+/**
+ * X-axis tick spacings in seconds, from a minute to a year, so a long custom
+ * range on a narrow screen still finds a spacing wide enough for labels.
+ */
+const day = 86400
 const timeIncrs = [
   60,
   120,
@@ -46,9 +50,15 @@ const timeIncrs = [
   10800,
   21600,
   43200,
-  86400,
-  2 * 86400,
-  7 * 86400,
+  day,
+  2 * day,
+  7 * day,
+  14 * day,
+  30 * day,
+  60 * day,
+  90 * day,
+  180 * day,
+  365 * day,
 ]
 
 export function MetricChart({
