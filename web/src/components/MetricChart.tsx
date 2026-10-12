@@ -33,6 +33,24 @@ function useThemeColors(): Colors {
 
 const separator = '\u0000'
 
+/** X-axis tick spacings in seconds, from a minute to a week. */
+const timeIncrs = [
+  60,
+  120,
+  300,
+  600,
+  900,
+  1800,
+  3600,
+  7200,
+  10800,
+  21600,
+  43200,
+  86400,
+  2 * 86400,
+  7 * 86400,
+]
+
 export function MetricChart({
   data,
   labels,
@@ -78,6 +96,8 @@ export function MetricChart({
       axes: [
         {
           ...axis,
+          // Labels show minutes, so ticks are never closer than a minute.
+          incrs: timeIncrs,
           // The span comes from the data drawn now, which setData replaces.
           values: (u, splits) => {
             const xs = u.data[0]

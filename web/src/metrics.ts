@@ -49,10 +49,15 @@ export const stepOptions = [
 /** Columns that group_by takes besides point attribute keys. */
 export const groupColumns = ['service', 'environment', 'version'] as const
 
-/** Group-by choices: none, the columns, then attribute keys not named like a column. */
-export function groupByOptions(attributeKeys: string[]): string[] {
+/**
+ * Group-by choices: none, the columns, then attribute keys not named like a
+ * column, then the current choice if none of those is it (a key from a link,
+ * or one with no points in the range), so the control shows what applies.
+ */
+export function groupByOptions(attributeKeys: string[], current?: string): string[] {
   const columns: readonly string[] = groupColumns
-  return ['', ...columns, ...attributeKeys.filter((k) => !columns.includes(k))]
+  const options = ['', ...columns, ...attributeKeys.filter((k) => !columns.includes(k))]
+  return current && !options.includes(current) ? [...options, current] : options
 }
 
 /** uPlot's aligned data: epoch seconds, then one array per series with nulls kept. */

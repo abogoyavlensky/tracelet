@@ -62,6 +62,15 @@ describe('kinds and aggregations', () => {
       'version',
       'http.route',
     ])
+    expect(groupByOptions(['http.route'], 'region')).toEqual([
+      '',
+      'service',
+      'environment',
+      'version',
+      'http.route',
+      'region',
+    ])
+    expect(groupByOptions(['http.route'], 'http.route')).toHaveLength(5)
   })
 })
 

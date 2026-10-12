@@ -14,14 +14,6 @@ export function MetricLegend({
   hidden: ReadonlySet<number>
   onToggle: (index: number) => void
 }) {
-  if (items.length < 2 && !hidden.size) {
-    const only = items[0]
-    return only ? (
-      <p className="px-1 text-[13px] text-muted">
-        <span className="font-mono text-fg tabular-nums">{only.value}</span>
-      </p>
-    ) : null
-  }
   return (
     <ul className="flex flex-wrap gap-x-2 gap-y-0.5">
       {items.map((item, i) => {

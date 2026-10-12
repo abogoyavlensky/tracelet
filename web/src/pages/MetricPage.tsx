@@ -143,7 +143,10 @@ export function MetricPage({ name, search }: { name: string; search: MetricSearc
         <SelectFilter
           label="Group by"
           value={search.group_by ?? ''}
-          options={groupByOptions(attributes.data?.items.map((a) => a.key) ?? []).map((g) => ({
+          options={groupByOptions(
+            attributes.data?.items.map((a) => a.key) ?? [],
+            search.group_by,
+          ).map((g) => ({
             value: g,
             label: groupLabels[g] ?? g,
           }))}
