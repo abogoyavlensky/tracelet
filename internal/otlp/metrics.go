@@ -1,6 +1,7 @@
 package otlp
 
 import (
+	"encoding/binary"
 	"fmt"
 	"hash/fnv"
 	"math"
@@ -226,7 +227,8 @@ func (c *Converted) keep(mc metricContext, p telemetry.MetricPoint) {
 // attributes are fixed for an SDK's lifetime, so replicas and restarted
 // processes are separate series, and temporality, monotonicity, and unit are
 // included so a configuration change never mixes points of different
-// meaning. The JSON strings come from jsonObject, which sorts keys.
+// meaning. The JSON strings come from jsonObject, which sorts keys. Each
+// field is length-prefixed.
 func seriesHash(projectID, name string, typ, temporality int16, monotonic bool,
 	unit, scopeName, scopeVersion, scopeAttrsJSON, resourceJSON, attrsJSON string,
 ) uint64 {
@@ -239,8 +241,10 @@ func seriesHash(projectID, name string, typ, temporality int16, monotonic bool,
 		projectID, name, strconv.Itoa(int(typ)), strconv.Itoa(int(temporality)), mono, unit,
 		scopeName, scopeVersion, scopeAttrsJSON, resourceJSON, attrsJSON,
 	} {
+		// A length prefix keeps field boundaries unambiguous: OTLP strings
+		// may contain NUL bytes, so no separator byte would.
+		_, _ = h.Write(binary.AppendUvarint(nil, uint64(len(s))))
 		_, _ = h.Write([]byte(s))
-		_, _ = h.Write([]byte{0})
 	}
 	return h.Sum64()
 }

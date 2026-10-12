@@ -192,6 +192,9 @@ func TestSeriesHash(t *testing.T) {
 	assert.NotEqual(t, base, hashOf(t, "p1", &commonpb.InstrumentationScope{Name: "app", Version: "2"},
 		kv("a", str("1")), kv("b", two)), "scope version")
 	assert.NotEqual(t, base, hashOf(t, "p1", scope, kv("a", str("1"))), "attributes")
+	assert.NotEqual(t,
+		hashOf(t, "p1", &commonpb.InstrumentationScope{Name: "a\x00b", Version: "c"}),
+		hashOf(t, "p1", &commonpb.InstrumentationScope{Name: "a", Version: "b\x00c"}), "field boundaries")
 }
 
 func TestConvertMetricsUnknownService(t *testing.T) {
