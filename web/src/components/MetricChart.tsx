@@ -64,8 +64,6 @@ export function MetricChart({
     if (!el) return
     const names = shape === '' ? [] : shape.split(separator)
     const initial = latest.current.data
-    const xs = initial[0]
-    const span = xs.length > 1 ? xs[xs.length - 1] - xs[0] : 0
     const axis = {
       stroke: colors.muted,
       grid: { stroke: colors.line, width: 1 },
@@ -78,7 +76,15 @@ export function MetricChart({
       cursor: { points: { size: 7 } },
       scales: { x: { time: true } },
       axes: [
-        { ...axis, values: (_u, splits) => splits.map((s) => axisTime(s, span)) },
+        {
+          ...axis,
+          // The span comes from the data drawn now, which setData replaces.
+          values: (u, splits) => {
+            const xs = u.data[0]
+            const span = xs.length > 1 ? xs[xs.length - 1] - xs[0] : 0
+            return splits.map((s) => axisTime(s, span))
+          },
+        },
         { ...axis, size: 72, values: (_u, splits) => splits.map((s) => latest.current.formatY(s)) },
       ],
       series: [
@@ -89,7 +95,11 @@ export function MetricChart({
           width: 1.5,
           spanGaps: false,
           show: !latest.current.hidden.has(i),
-          points: { show: hasIsolatedValue(initial[i + 1] ?? []) },
+          // Decided per draw, so new data with a lone value still shows it.
+          points: {
+            show: (u: uPlot, si: number) =>
+              hasIsolatedValue((u.data[si] ?? []) as (number | null)[]),
+          },
         })),
       ],
       hooks: {
