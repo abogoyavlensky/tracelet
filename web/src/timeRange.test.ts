@@ -94,6 +94,9 @@ describe('isGoDuration', () => {
     ['0h0m', false],
     ['999999999h', false],
     ['2562047h', true],
+    ['9223372036854775807ns', true],
+    ['9223372036854775808ns', false],
+    ['1.5h', true],
   ])('%s is %s', (s, want) => {
     expect(isGoDuration(s)).toBe(want)
   })

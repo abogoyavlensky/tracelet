@@ -14,25 +14,28 @@ export const presets = [
   { label: '7d', last: '168h' },
 ] as const
 
-const goDurationPart = /(\d+(?:\.\d+)?)(ns|us|µs|ms|s|m|h)/g
-const unitNs: Record<string, number> = {
-  ns: 1,
-  us: 1e3,
-  µs: 1e3,
-  ms: 1e6,
-  s: 1e9,
-  m: 6e10,
-  h: 3.6e12,
+const goDurationPart = /(\d+)(?:\.(\d+))?(ns|us|µs|ms|s|m|h)/g
+const unitNs: Record<string, bigint> = {
+  ns: 1n,
+  us: 1_000n,
+  µs: 1_000n,
+  ms: 1_000_000n,
+  s: 1_000_000_000n,
+  m: 60_000_000_000n,
+  h: 3_600_000_000_000n,
 }
-// Go durations are int64 nanoseconds.
-const durationLimitNs = 2 ** 63
+// Go durations are int64 nanoseconds; BigInt keeps the bound exact.
+const maxDurationNs = 2n ** 63n - 1n
 
 /** A positive Go duration (time.ParseDuration syntax) that fits in int64 nanoseconds. */
 export function isGoDuration(s: string): boolean {
   if (!/^(\d+(\.\d+)?(ns|us|µs|ms|s|m|h))+$/.test(s)) return false
-  let ns = 0
-  for (const [, n, unit] of s.matchAll(goDurationPart)) ns += Number(n) * unitNs[unit]
-  return ns > 0 && ns < durationLimitNs
+  let ns = 0n
+  for (const [, whole, frac = '', unit] of s.matchAll(goDurationPart)) {
+    const scale = unitNs[unit]
+    ns += BigInt(whole) * scale + (BigInt(frac || '0') * scale) / 10n ** BigInt(frac.length)
+  }
+  return ns > 0n && ns <= maxDurationNs
 }
 
 function validTime(v: unknown): v is string {
