@@ -37,9 +37,10 @@ export const loginRoute = createRoute({
     const next = safeNext(raw.next)
     return next ? { next } : {}
   },
-  // Already signed in: go where the sign-in would have led.
+  // Already signed in: go where the sign-in would have led. Ask the server
+  // rather than trusting the cache, which may hold a revoked session.
   beforeLoad: async ({ context, search }) => {
-    const signedIn = await context.queryClient.ensureQueryData(sessionQuery).then(
+    const signedIn = await context.queryClient.fetchQuery({ ...sessionQuery, staleTime: 0 }).then(
       () => true,
       () => false,
     )

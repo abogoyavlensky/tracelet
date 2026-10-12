@@ -14,8 +14,8 @@ const queryClient: QueryClient = new QueryClient({
     // guard would find it and let the user straight back in.
     onError: (error, query) => {
       if (!(error instanceof ApiError) || error.status !== 401) return
-      if (query.queryKey[0] === sessionKey[0]) return // the route guard handles this one
       queryClient.removeQueries({ queryKey: sessionKey })
+      if (query.queryKey[0] === sessionKey[0]) return // the route guard redirects for this one
       if (router.state.location.pathname !== '/login') {
         void router.navigate({ to: '/login', search: { next: router.state.location.href } })
       }
