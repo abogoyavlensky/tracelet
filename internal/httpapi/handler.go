@@ -50,6 +50,8 @@ type Handler struct {
 	now          func() time.Time
 	diskPressure func() bool
 	logger       *slog.Logger
+	// crossOrigin guards requests authenticated by the session cookie.
+	crossOrigin *http.CrossOriginProtection
 }
 
 // API is the HTTP API: the routes, and the list of patterns they were
@@ -77,7 +79,7 @@ func NewHandler(deps Deps) *API {
 	h := &Handler{
 		info: deps.Info, auth: deps.Auth, projects: deps.Projects, ingester: deps.Ingester,
 		queries: deps.Queries, ingestStats: deps.IngestStats, storageStats: deps.StorageStats, now: deps.Now,
-		diskPressure: deps.DiskPressure, logger: deps.Logger,
+		diskPressure: deps.DiskPressure, logger: deps.Logger, crossOrigin: http.NewCrossOriginProtection(),
 	}
 	if h.now == nil {
 		h.now = time.Now
@@ -86,6 +88,9 @@ func NewHandler(deps Deps) *API {
 	a := &API{mux: http.NewServeMux()}
 	a.handle("GET /api/v1/health", h.health)
 	a.handle("GET /api/v1/openapi.yaml", h.openAPI)
+	a.handle("POST /api/v1/session", h.signIn)
+	a.handle("GET /api/v1/session", h.requireScope(project.ScopeRead, h.session))
+	a.handle("DELETE /api/v1/session", h.signOut)
 	a.handle("GET /api/v1/projects", h.requireScope(project.ScopeAdmin, h.listProjects))
 	a.handle("POST /api/v1/projects", h.requireScope(project.ScopeAdmin, h.createProject))
 	a.handle("GET /api/v1/tokens", h.requireScope(project.ScopeAdmin, h.listTokens))

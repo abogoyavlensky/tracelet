@@ -1,1 +1,112 @@
 @import 'tailwindcss';
+
+/* Dark mode is a class on <html>, set by the theme toggle (theme.ts) and,
+   before first paint, by the inline script in index.html. */
+@custom-variant dark (&:where(.dark, .dark *));
+
+/* Semantic colour tokens. Components use these (bg-surface, text-muted,
+   border-line, ...) and never raw palette classes, so light and dark are
+   one set of values each. Cobalt on pale steel; the service series leave
+   out red and orange, which mean error and warn. */
+:root {
+  --canvas: #e7ebf1;
+  --surface: #ffffff;
+  --raised: #eff2f8;
+  --line: #d6dce6;
+  --fg: #172033;
+  --muted: #566178;
+  --subtle: #8a94a7;
+  --accent: #2f4fd6;
+  --accent-fg: #ffffff;
+  --ok: #23854a;
+  --error: #c42839;
+  --sev-trace: #9aa3b5;
+  --sev-debug: #6f7a90;
+  --sev-info: #2f6fd0;
+  --sev-warn: #b45d09;
+  --sev-error: #c42839;
+  --sev-fatal: #8f1d6b;
+  --series-0: #3451d1;
+  --series-1: #0f8b8d;
+  --series-2: #7c3aed;
+  --series-3: #2f8f46;
+  --series-4: #4d7c0f;
+  --series-5: #0284c7;
+  --series-6: #8a7360;
+  --series-7: #52607a;
+  color-scheme: light;
+}
+
+.dark {
+  --canvas: #0a0f1a;
+  --surface: #111827;
+  --raised: #182136;
+  --line: #243049;
+  --fg: #e3e8f2;
+  --muted: #9aa6bd;
+  --subtle: #66728a;
+  --accent: #7d95ff;
+  --accent-fg: #0a0f1a;
+  --ok: #5ad08a;
+  --error: #ff6b7a;
+  --sev-trace: #66728a;
+  --sev-debug: #8a96ad;
+  --sev-info: #74a7ff;
+  --sev-warn: #f5ad5b;
+  --sev-error: #ff6b7a;
+  --sev-fatal: #f08bd0;
+  --series-0: #7d95ff;
+  --series-1: #3cc8c9;
+  --series-2: #b18cff;
+  --series-3: #5ad08a;
+  --series-4: #94c95f;
+  --series-5: #5cc0f5;
+  --series-6: #c9b29b;
+  --series-7: #9aa6bd;
+  color-scheme: dark;
+}
+
+@theme inline {
+  --color-canvas: var(--canvas);
+  --color-surface: var(--surface);
+  --color-raised: var(--raised);
+  --color-line: var(--line);
+  --color-fg: var(--fg);
+  --color-muted: var(--muted);
+  --color-subtle: var(--subtle);
+  --color-accent: var(--accent);
+  --color-accent-fg: var(--accent-fg);
+  --color-ok: var(--ok);
+  --color-error: var(--error);
+  --color-sev-trace: var(--sev-trace);
+  --color-sev-debug: var(--sev-debug);
+  --color-sev-info: var(--sev-info);
+  --color-sev-warn: var(--sev-warn);
+  --color-sev-error: var(--sev-error);
+  --color-sev-fatal: var(--sev-fatal);
+  --color-series-0: var(--series-0);
+  --color-series-1: var(--series-1);
+  --color-series-2: var(--series-2);
+  --color-series-3: var(--series-3);
+  --color-series-4: var(--series-4);
+  --color-series-5: var(--series-5);
+  --color-series-6: var(--series-6);
+  --color-series-7: var(--series-7);
+  --font-sans:
+    ui-sans-serif, system-ui, -apple-system, 'Segoe UI', Roboto, 'Helvetica Neue', Arial, sans-serif;
+  --font-mono: ui-monospace, SFMono-Regular, Menlo, Consolas, 'Liberation Mono', monospace;
+}
+
+/* Failed spans: hatched, so an error reads without relying on colour alone. */
+@utility error-hatch {
+  background-image: repeating-linear-gradient(
+    -45deg,
+    var(--error) 0 3px,
+    color-mix(in srgb, var(--error) 55%, transparent) 3px 6px
+  );
+}
+
+body {
+  background: var(--canvas);
+  color: var(--fg);
+}

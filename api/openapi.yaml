@@ -6,19 +6,25 @@ info:
     Management and query API under /api/v1/, and the OTLP/HTTP logs and
     traces receivers at /v1/logs and /v1/traces.
 
-    Every route except health and this document needs a bearer token
-    (`Authorization: Bearer tl_...`). Tokens have one scope:
+    Every route except health, this document, and signing in and out needs
+    a bearer token (`Authorization: Bearer tl_...`). Tokens have one scope:
 
     - `ingest`: writes telemetry to one project, through /v1/logs and
       /v1/traces only.
     - `read`: reads one project, or every project when created without one.
     - `admin`: everything, including projects and tokens.
 
+    The web UI signs in by posting an `admin` or `read` token to
+    /api/v1/session, which sets the `tracelet_session` cookie. The cookie
+    authenticates routes under /api/ like a bearer token; OTLP routes ignore
+    it. Use one token per browser, so one device can be revoked alone.
+
     Errors are JSON objects `{"error": "..."}`. A 503 carries `Retry-After`.
 servers:
   - url: http://localhost:8080
 security:
   - bearer: []
+  - cookie: []
 
 paths:
   /v1/logs:
@@ -30,6 +36,8 @@ paths:
         after decompression. A 200 means the records are stored. OTLP/JSON is
         not supported yet and gets 415.
       operationId: ingestLogs
+      security:
+        - bearer: []
       parameters:
         - name: Content-Encoding
           in: header
@@ -66,6 +74,8 @@ paths:
         request does not store spans twice. `trace_state` and `flags` are not
         stored. OTLP/JSON is not supported yet and gets 415.
       operationId: ingestTraces
+      security:
+        - bearer: []
       parameters:
         - name: Content-Encoding
           in: header
@@ -113,6 +123,67 @@ paths:
           content:
             application/yaml:
               schema: { type: string }
+
+  /api/v1/session:
+    post:
+      summary: Sign in
+      description: |
+        Checks an `admin` or `read` token and sets the `tracelet_session`
+        cookie to it: `HttpOnly`, `SameSite=Strict`, `Path=/api/`, valid for
+        30 days, and `Secure` when the request came over HTTPS (directly or
+        with `X-Forwarded-Proto: https`). Revoking the token ends the
+        session. An `ingest` token gets 403. A cross-origin browser request
+        gets 403.
+      operationId: signIn
+      security: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [token]
+              additionalProperties: false
+              properties:
+                token: { type: string }
+      responses:
+        "200":
+          description: Signed in
+          headers:
+            Set-Cookie:
+              schema: { type: string }
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Session" }
+        "400": { $ref: "#/components/responses/Error" }
+        "401": { $ref: "#/components/responses/Error" }
+        "403": { $ref: "#/components/responses/Error" }
+    get:
+      summary: The signed-in token
+      description: |
+        Needs a `read` token, from the cookie or a bearer header. Lists the
+        projects the token may read.
+      operationId: getSession
+      responses:
+        "200":
+          description: The session
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Session" }
+        "401": { $ref: "#/components/responses/Error" }
+        "403": { $ref: "#/components/responses/Error" }
+    delete:
+      summary: Sign out
+      description: Clears the session cookie. The token stays valid.
+      operationId: signOut
+      security: []
+      responses:
+        "204":
+          description: Signed out
+          headers:
+            Set-Cookie:
+              schema: { type: string }
+        "403": { $ref: "#/components/responses/Error" }
 
   /api/v1/projects:
     get:
@@ -391,6 +462,13 @@ components:
       type: http
       scheme: bearer
       description: A Tracelet token, `tl_` plus 40 hex characters.
+    cookie:
+      type: apiKey
+      in: cookie
+      name: tracelet_session
+      description: |
+        Set by signing in; holds the token. Accepted only under /api/.
+        Non-safe cross-origin browser requests carrying it are refused.
 
   parameters:
     Project:
@@ -440,6 +518,22 @@ components:
     Scope:
       type: string
       enum: [ingest, read, admin]
+    Session:
+      type: object
+      required: [scope, token_name, projects]
+      properties:
+        scope: { type: string, enum: [read, admin] }
+        token_name: { type: string }
+        project: { type: string, description: The token's project slug; absent for admin and all-project tokens. }
+        projects:
+          type: array
+          description: The projects the token may read.
+          items:
+            type: object
+            required: [slug, name]
+            properties:
+              slug: { type: string }
+              name: { type: string }
     Project:
       type: object
       required: [id, slug, name, created_at]
