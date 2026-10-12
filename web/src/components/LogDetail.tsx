@@ -9,7 +9,15 @@ import { icons } from './icons'
 import { KeyValues } from './KeyValues'
 import { severityTone } from './tones'
 
-export function LogDetail({ log, project }: { log: Log; project: string | undefined }) {
+export function LogDetail({
+  log,
+  project,
+  hideTraceLink,
+}: {
+  log: Log
+  project: string | undefined
+  hideTraceLink?: boolean
+}) {
   const sev = severityName(log.severity_number)
   const stack = log.attributes?.['exception.stacktrace']
   return (
@@ -32,7 +40,7 @@ export function LogDetail({ log, project }: { log: Log; project: string | undefi
         </pre>
       )}
       <div className="mt-5 flex flex-wrap gap-2">
-        {log.trace_id && (
+        {log.trace_id && !hideTraceLink && (
           <Link
             to="/traces/$traceId"
             params={{ traceId: log.trace_id }}

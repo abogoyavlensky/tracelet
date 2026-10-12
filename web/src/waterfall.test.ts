@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest'
 import type { Span, Trace } from './api'
-import { assignServiceColors, buildWaterfall, serviceColorIndex } from './waterfall'
+import { assignServiceColors, buildWaterfall, serviceColorIndex, visibleRows } from './waterfall'
 
 const base = '2026-10-12T10:00:00Z'
 
@@ -121,5 +121,28 @@ describe('buildWaterfall', () => {
     expect(assignServiceColors(['api']).get('api')).toBe(serviceColorIndex('api'))
     expect(serviceColorIndex('api')).toBeGreaterThanOrEqual(0)
     expect(serviceColorIndex('api')).toBeLessThan(8)
+  })
+})
+
+describe('visibleRows', () => {
+  it('hides the descendants of collapsed spans and nothing else', () => {
+    const rows = buildWaterfall(
+      trace(
+        [
+          span('root', undefined, 0, 100),
+          span('a', 'root', 1, 50),
+          span('a1', 'a', 2, 10),
+          span('a2', 'a1', 3, 5),
+          span('b', 'root', 60, 10),
+          span('lost', 'gone', 70, 5),
+        ],
+        100,
+      ),
+    )
+    const ids = (collapsed: string[]) =>
+      visibleRows(rows, new Set(collapsed)).map((r) => r.span.span_id)
+    expect(ids([])).toEqual(['root', 'a', 'a1', 'a2', 'b', 'lost'])
+    expect(ids(['a'])).toEqual(['root', 'a', 'b', 'lost'])
+    expect(ids(['root'])).toEqual(['root', 'lost'])
   })
 })

@@ -100,3 +100,15 @@ export function buildWaterfall(trace: Trace): WaterfallRow[] {
   for (const s of trace.spans.toSorted(byStart)) visit(s, 0, true)
   return rows
 }
+
+/** Rows with every collapsed span's descendants left out. */
+export function visibleRows(rows: WaterfallRow[], collapsed: Set<string>): WaterfallRow[] {
+  const out: WaterfallRow[] = []
+  let hideBelow: number | null = null
+  for (const r of rows) {
+    if (hideBelow !== null && r.depth > hideBelow) continue
+    hideBelow = collapsed.has(r.span.span_id) ? r.depth : null
+    out.push(r)
+  }
+  return out
+}
