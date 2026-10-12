@@ -45,6 +45,20 @@ describe('normalizeRange', () => {
     expect(normalizeRange({ from: '2026-10-12T11:00:00Z', to: '2026-10-12T10:00:00Z' })).toEqual({})
     expect(normalizeRange({})).toEqual({})
   })
+
+  it('accepts only RFC 3339 instants with a zone', () => {
+    expect(normalizeRange({ from: '2026-10-12', to: '2026-10-13' })).toEqual({})
+    expect(normalizeRange({ from: '2026-10-12T10:00:00', to: '2026-10-12T11:00:00' })).toEqual({})
+    expect(
+      normalizeRange({ from: '2026-10-12T10:00:00+02:00', to: '2026-10-12T10:00:00.5+02:00' }),
+    ).toEqual({ from: '2026-10-12T10:00:00+02:00', to: '2026-10-12T10:00:00.5+02:00' })
+  })
+
+  it('keeps a range narrower than a millisecond', () => {
+    expect(
+      normalizeRange({ from: '2026-10-12T10:00:00.000001Z', to: '2026-10-12T10:00:00.000002Z' }),
+    ).toEqual({ from: '2026-10-12T10:00:00.000001Z', to: '2026-10-12T10:00:00.000002Z' })
+  })
 })
 
 describe('rangeParams', () => {
@@ -76,6 +90,10 @@ describe('isGoDuration', () => {
     ['', false],
     ['ms', false],
     ['-1h', false],
+    ['0s', false],
+    ['0h0m', false],
+    ['999999999h', false],
+    ['2562047h', true],
   ])('%s is %s', (s, want) => {
     expect(isGoDuration(s)).toBe(want)
   })

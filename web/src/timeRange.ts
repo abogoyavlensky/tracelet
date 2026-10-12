@@ -1,7 +1,7 @@
 // Time ranges as the URL and the API carry them: a relative `last` (a Go
 // duration ending now) or an absolute from/to, or neither for the API's
 // default. Links between views always use absolute ranges.
-import { epochMs, formatShort } from './format'
+import { epochMs, formatShort, isRFC3339, nsSince } from './format'
 
 export type TimeRange = { last: string } | { from: string; to: string } | Record<string, never>
 
@@ -14,14 +14,29 @@ export const presets = [
   { label: '7d', last: '168h' },
 ] as const
 
-const goDuration = /^(\d+(\.\d+)?(ns|us|µs|ms|s|m|h))+$/
+const goDurationPart = /(\d+(?:\.\d+)?)(ns|us|µs|ms|s|m|h)/g
+const unitNs: Record<string, number> = {
+  ns: 1,
+  us: 1e3,
+  µs: 1e3,
+  ms: 1e6,
+  s: 1e9,
+  m: 6e10,
+  h: 3.6e12,
+}
+// Go durations are int64 nanoseconds.
+const durationLimitNs = 2 ** 63
 
+/** A positive Go duration (time.ParseDuration syntax) that fits in int64 nanoseconds. */
 export function isGoDuration(s: string): boolean {
-  return goDuration.test(s)
+  if (!/^(\d+(\.\d+)?(ns|us|µs|ms|s|m|h))+$/.test(s)) return false
+  let ns = 0
+  for (const [, n, unit] of s.matchAll(goDurationPart)) ns += Number(n) * unitNs[unit]
+  return ns > 0 && ns < durationLimitNs
 }
 
 function validTime(v: unknown): v is string {
-  return typeof v === 'string' && !Number.isNaN(Date.parse(v))
+  return typeof v === 'string' && isRFC3339(v)
 }
 
 /** Keeps only a range the API accepts; `last` wins over from/to. */
@@ -29,7 +44,7 @@ export function normalizeRange(r: { last?: unknown; from?: unknown; to?: unknown
   if (typeof r.last === 'string' && isGoDuration(r.last)) {
     return { last: r.last }
   }
-  if (validTime(r.from) && validTime(r.to) && epochMs(r.from) < epochMs(r.to)) {
+  if (validTime(r.from) && validTime(r.to) && nsSince(r.from, r.to) > 0) {
     return { from: r.from, to: r.to }
   }
   return {}

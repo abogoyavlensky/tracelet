@@ -20,6 +20,11 @@ export function formatDuration(ns: number): string {
 
 const rfc3339 = /^(\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2})(?:\.(\d+))?(Z|[+-]\d{2}:\d{2})$/i
 
+/** An RFC 3339 timestamp with a zone, the only form the API accepts for from and to. */
+export function isRFC3339(ts: string): boolean {
+  return rfc3339.test(ts) && !Number.isNaN(Date.parse(ts.replace(/\.\d+/, '')))
+}
+
 /** Splits a timestamp into whole-second epoch milliseconds and the nanoseconds past that second. */
 function parts(ts: string): [number, number] {
   const m = rfc3339.exec(ts)
