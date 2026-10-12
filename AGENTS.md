@@ -40,6 +40,19 @@ both Go and the frontend.
   applied in name order; never edit an applied migration.
 - New dependencies, Go or npm, are a decision: mention them explicitly.
 
+## Release and deploy
+
+- `cmd/tracelet` has a `cli` build tag. The CLI build (`rite build-cli`, no
+  cgo) must not link storage or the server; `rite check-cli`, part of
+  `rite check`, enforces it.
+- `ci.yml` builds the binary that ships, on each architecture. `release.yml`
+  (tags `vX.Y.Z`) and `deploy.yml` (pushes to `master`) call it and use its
+  artifacts; they do not rebuild.
+- Never ship a binary built on a newer glibc than trixie's 2.41: the Docker
+  image would not start it. CI builds on pinned `ubuntu-24.04` runners; a dev
+  box binary is for the dev box.
+- Details, variables and secrets: `docs/operations.md`.
+
 ## Backlog
 
 `docs/backlog/` holds known issues and ideas that are not being worked on yet.

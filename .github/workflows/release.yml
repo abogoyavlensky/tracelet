@@ -1,0 +1,185 @@
+name: release
+
+# A pushed tag vX.Y.Z publishes the image to ghcr.io (X.Y.Z, X.Y, latest) and
+# a GitHub release: the CLI for Linux and macOS, and the combined server
+# binary for Linux. Run by hand, it is a dry run: the tests, both images and
+# all CLI builds, nothing pushed, no release.
+on:
+  push:
+    tags: ['v[0-9]+.[0-9]+.[0-9]+']
+  workflow_dispatch:
+
+# A release that started is never cancelled halfway.
+concurrency:
+  group: release-${{ github.ref }}
+  cancel-in-progress: false
+
+permissions:
+  contents: read
+
+env:
+  IMAGE: ghcr.io/abogoyavlensky/tracelet
+
+jobs:
+  # Tests both architectures and uploads the bin/tracelet each one built.
+  test:
+    uses: ./.github/workflows/ci.yml
+
+  image:
+    needs: [test]
+    # Native per architecture: the Dockerfile's apt-get needs the target
+    # architecture. Pinned like ci.yml: the image needs a binary linked
+    # against a glibc no newer than trixie's 2.41, and the release binaries
+    # need the 2.39 these runners have.
+    runs-on: ${{ matrix.runner }}
+    timeout-minutes: 15
+    # Job permissions replace the top-level map, so contents is restated.
+    permissions:
+      contents: read
+      packages: write
+    strategy:
+      fail-fast: true
+      matrix:
+        include:
+          - arch: amd64
+            runner: ubuntu-24.04
+          - arch: arm64
+            runner: ubuntu-24.04-arm
+    steps:
+      - uses: actions/checkout@v7
+
+      # The binary that passed `rite check` on this architecture.
+      - uses: actions/download-artifact@v8
+        with:
+          name: tracelet-linux-${{ matrix.arch }}
+          path: bin
+
+      # Artifacts lose the executable bit.
+      - run: chmod +x bin/tracelet
+
+      # A shallow checkout where `git describe` missed the tag would build a
+      # binary that reports the wrong version. The fix is fetch-depth: 0 on
+      # ci.yml's checkout.
+      - name: Check the version
+        if: github.event_name == 'push' && github.ref_type == 'tag'
+        run: test "$(bin/tracelet version)" = "$GITHUB_REF_NAME"
+
+      # Builds tracelet:local around this binary, starts it and asks for
+      # /api/v1/health. The image pushed below is this one, not a rebuild.
+      - name: Smoke-test the image
+        run: scripts/docker-smoke.sh
+
+      # The combined server and CLI, for hosts without Docker. The archive
+      # holds the binary alone, at its root.
+      - name: Pack the server binary
+        run: tar -czf tracelet-server-linux-${{ matrix.arch }}.tar.gz -C bin tracelet
+
+      - uses: actions/upload-artifact@v7
+        with:
+          name: release-server-linux-${{ matrix.arch }}
+          path: tracelet-server-linux-${{ matrix.arch }}.tar.gz
+          if-no-files-found: error
+          retention-days: 7
+
+      # Only a pushed tag publishes: a manual run can target a tag too.
+      - name: Log in to ghcr.io
+        if: github.event_name == 'push' && github.ref_type == 'tag'
+        env:
+          TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          ACTOR: ${{ github.actor }}
+        run: echo "$TOKEN" | docker login ghcr.io -u "$ACTOR" --password-stdin
+
+      - name: Push the image
+        if: github.event_name == 'push' && github.ref_type == 'tag'
+        env:
+          ARCH: ${{ matrix.arch }}
+        run: |
+          tag="$IMAGE:${GITHUB_REF_NAME#v}-$ARCH"
+          docker tag tracelet:local "$tag"
+          docker push "$tag"
+
+  # The CLI-only build: no cgo, no DuckDB, so one runner cross-compiles all
+  # four targets. It runs on dry runs too, so a broken cross-compile shows
+  # before a tag.
+  cli:
+    needs: [test]
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v7
+
+      # Go and rite at the versions pinned in .mise.toml; nothing carries
+      # over from the test job.
+      - uses: jdx/mise-action@v5
+
+      - uses: actions/cache@v6
+        with:
+          path: |
+            ~/.cache/go-build
+            ~/go/pkg/mod
+          key: go-cli-${{ runner.os }}-${{ hashFiles('go.sum') }}
+          restore-keys: go-cli-${{ runner.os }}-
+
+      - name: Build and pack
+        run: |
+          for target in linux/amd64 linux/arm64 darwin/amd64 darwin/arm64; do
+            os="${target%/*}"
+            arch="${target#*/}"
+            GOOS="$os" GOARCH="$arch" rite build-cli
+            tar -czf "tracelet-$os-$arch.tar.gz" -C bin/cli tracelet
+            # The runner can run only its own build: check the version
+            # there, before the next target overwrites it.
+            if [ "$target" = linux/amd64 ] && [ "$GITHUB_EVENT_NAME" = push ] && [ "$GITHUB_REF_TYPE" = tag ]; then
+              test "$(bin/cli/tracelet version)" = "$GITHUB_REF_NAME"
+            fi
+          done
+
+      - uses: actions/upload-artifact@v7
+        with:
+          name: release-cli
+          path: tracelet-*.tar.gz
+          if-no-files-found: error
+          retention-days: 7
+
+  publish:
+    needs: [image, cli]
+    if: github.event_name == 'push' && github.ref_type == 'tag'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    permissions:
+      contents: write
+      packages: write
+    steps:
+      # gh release needs the repository.
+      - uses: actions/checkout@v7
+
+      - uses: actions/download-artifact@v8
+        with:
+          pattern: release-*
+          merge-multiple: true
+          path: dist
+
+      - name: Checksums
+        run: cd dist && sha256sum tracelet-*.tar.gz > checksums.txt
+
+      - name: Log in to ghcr.io
+        env:
+          TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          ACTOR: ${{ github.actor }}
+        run: echo "$TOKEN" | docker login ghcr.io -u "$ACTOR" --password-stdin
+
+      # One multi-arch manifest over the two smoke-tested arch images.
+      - name: Publish the image
+        run: |
+          version="${GITHUB_REF_NAME#v}"
+          minor="${version%.*}"
+          docker buildx imagetools create \
+            -t "$IMAGE:$version" -t "$IMAGE:$minor" -t "$IMAGE:latest" \
+            "$IMAGE:$version-amd64" "$IMAGE:$version-arm64"
+          docker buildx imagetools inspect "$IMAGE:$version"
+
+      # Last, so a release never exists without its image.
+      - name: Create the release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: gh release create "$GITHUB_REF_NAME" dist/* --title "$GITHUB_REF_NAME" --generate-notes --verify-tag

@@ -1,6 +1,6 @@
 # Tracelet design
 
-Status: initial technical design, 7 October 2026. This document records the chosen implementation direction for the vision in [VISION.md](VISION.md). Decisions marked **decided** are the plan unless phase 0 measurements contradict them. Everything else is a candidate. Phase 0 measured the storage layout on 8 October 2026; see [the storage spike results](spikes/storage.md). Phase 1 slice 1 (10 October 2026, [plan](plans/2026-10-10-1027-logs-slice.md)) built the storage layer, projects and tokens, OTLP/HTTP logs ingestion, logs search, and the CLI for them. Phase 1 slice 2 (11 October 2026, [plan](plans/2026-10-11-0858-traces-slice.md)) added OTLP/HTTP traces ingestion with span deduplication, trace lookup by ID, span search, and their CLI commands. Nothing else here has been built yet.
+Status: initial technical design, 7 October 2026. This document records the chosen implementation direction for the vision in [VISION.md](VISION.md). Decisions marked **decided** are the plan unless phase 0 measurements contradict them. Everything else is a candidate. Phase 0 measured the storage layout on 8 October 2026; see [the storage spike results](spikes/storage.md). Phase 1 slice 1 (10 October 2026, [plan](plans/2026-10-10-1027-logs-slice.md)) built the storage layer, projects and tokens, OTLP/HTTP logs ingestion, logs search, and the CLI for them. Phase 1 slice 2 (11 October 2026, [plan](plans/2026-10-11-0858-traces-slice.md)) added OTLP/HTTP traces ingestion with span deduplication, trace lookup by ID, span search, and their CLI commands. Packaging shipped on 11 October 2026 ([plan](plans/2026-10-11-2111-release-and-deploy.md)): a Docker image and Linux release binaries on version tags, the CLI-only build, and a deploy of every master push; see [operations](operations.md). Nothing else here has been built yet.
 
 ## Architecture
 
@@ -247,7 +247,7 @@ A single instance cannot alert on its own host failing. An external heartbeat mo
 
 Built frontend assets are embedded in the server executable; production needs no Node.js. DuckDB brings CGO and prebuilt native libraries. Phase 0 built and tested them with the bundled static libraries on both Linux architectures: unstripped binaries of 80 MB (amd64) and 73 MB (arm64). The executable is not universally static. CI and release builds pin `ubuntu-24.04` and `ubuntu-24.04-arm` rather than `ubuntu-latest`, because the runner's glibc sets the oldest glibc the binary runs on.
 
-**Platforms (decided).** The combined server and CLI executable ships for Linux amd64 and arm64, plus a Docker image. A CLI-only executable without DuckDB ships for macOS, Linux, and Windows. Additional server platforms are added on demand.
+**Platforms (decided).** The combined server and CLI executable ships for Linux amd64 and arm64, plus a multi-arch Docker image. A CLI-only executable without DuckDB (`-tags cli`, no cgo) ships for Linux and macOS on amd64 and arm64. Windows was promised here and is not built; it is added on demand, as are additional server platforms. This amends the decided item at the owner's request when packaging shipped.
 
 ## Delivery sequence and validation
 

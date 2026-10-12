@@ -1,0 +1,50 @@
+# tracelet on uncloud: `uc deploy` from .github/workflows/deploy.yml. The
+# image wraps the bin/tracelet CI built (see the Dockerfile); uncloud builds
+# it on the runner and ships it over SSH, and its Caddy terminates TLS.
+x-context: personal
+
+services:
+  tracelet:
+    build:
+      platforms:
+        - linux/amd64
+      cache_from:
+        - type=gha
+      cache_to:
+        - type=gha,mode=max
+    # Tracelet enforces its own 4 MB body limit before and after
+    # decompression, so the standard port mapping needs no Caddy block. The
+    # :? form fails loading when APP_DOMAIN is unset, rather than deploying
+    # with an empty host.
+    x-ports:
+      - ${APP_DOMAIN:?APP_DOMAIN must be set}:8080/https
+    # Survives deploys. Not backed up yet
+    # (docs/backlog/backup-and-restore-command.md).
+    volumes:
+      - /root/tracelet-data:/app/data
+    # Sized for a few personal services, not the design's 1.5 GB budget for
+    # 100 logs/s and 50 spans/s. DuckDB is capped below the limit by
+    # TRACELET_DUCKDB_MEMORY_LIMIT: at the limit a flush that runs out of
+    # memory fails, is logged, shows on health as last_flush_error and
+    # retries next tick, where the kernel would kill the whole process.
+    mem_limit: 256m
+    mem_reservation: 128m
+    # Shutdown gives the HTTP server 10 s, then drains the ingest queue and
+    # closes the writer and databases.
+    stop_grace_period: 30s
+    deploy:
+      update_config:
+        # DuckDB locks its file to one process, so the new container cannot
+        # start while the old one holds it. uncloud picks stop-first on its
+        # own only for port conflicts or Docker volumes, not for a bind
+        # mount (uncloud v0.20.0, pkg/client/deploy/strategy.go:425).
+        order: stop-first
+    environment:
+      # Stored as the admin token only while none is active; changing the
+      # secret later does not rotate it (docs/operations.md).
+      TRACELET_ADMIN_TOKEN: secret://admin_token
+      TRACELET_DUCKDB_MEMORY_LIMIT: 128MB
+
+secrets:
+  admin_token:
+    x-command: printenv ADMIN_TOKEN

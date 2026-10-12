@@ -10,6 +10,25 @@ Status: early. Tracelet ingests **logs and traces** so far, over OTLP/HTTP with
 protobuf encoding, and searches them through the HTTP API and the CLI. Metrics,
 the UI, and everything else in the vision come later.
 
+## Install
+
+The CLI, a small static binary for Linux and macOS (amd64 and arm64), comes
+from a [release](https://github.com/abogoyavlensky/tracelet/releases):
+
+```sh
+mise use github:abogoyavlensky/tracelet   # or unpack tracelet-<os>-<arch>.tar.gz
+```
+
+It talks to a server over HTTP; point it at one with `TRACELET_URL`. The
+server runs from the Docker image, or from `tracelet-server-linux-<arch>.tar.gz`
+(glibc 2.39 or newer), which is also a full CLI:
+
+```sh
+docker run -p 8080:8080 -v tracelet-data:/app/data \
+  -e TRACELET_ADMIN_TOKEN=tl_<at least 16 characters> \
+  ghcr.io/abogoyavlensky/tracelet
+```
+
 ## Quickstart
 
 Start the server. On first start it creates an admin token and prints it once:
@@ -95,7 +114,7 @@ mise install        # Go, Node, golangci-lint, rite
 rite setup          # the above plus frontend dependencies
 rite tasks          # list every task
 
-rite check          # fmt-check, lint, test: what CI runs
+rite check          # fmt-check, lint, test, check-cli: what CI runs
 rite build          # frontend + server binary into bin/tracelet
 ./bin/tracelet serve --data-dir ./data
 ```
@@ -106,6 +125,9 @@ For day-to-day work run the server and the frontend dev server side by side:
 rite dev            # Go server on :8080
 rite web-dev        # Vite on :5173, proxies /api to :8080
 ```
+
+Releases, the Docker image, and the master deploy are described in
+[docs/operations.md](docs/operations.md).
 
 ## Layout
 
