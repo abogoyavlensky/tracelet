@@ -28,7 +28,14 @@ const timeUnits: [number, string][] = [
   [1e-9, 'ns'],
 ]
 
-const secondsPer: Record<string, number> = { h: 3600, min: 60, s: 1, ms: 1e-3, us: 1e-6, ns: 1e-9 }
+const secondsPer = new Map<string, number>([
+  ['h', 3600],
+  ['min', 60],
+  ['s', 1],
+  ['ms', 1e-3],
+  ['us', 1e-6],
+  ['ns', 1e-9],
+])
 
 function formatSeconds(seconds: number): string {
   if (seconds === 0) return '0 s'
@@ -68,7 +75,8 @@ export function formatNumber(x: number): string {
 }
 
 function formatUnit(value: number, unit: string): string {
-  if (unit in secondsPer) return formatSeconds(value * secondsPer[unit])
+  const scale = secondsPer.get(unit)
+  if (scale !== undefined) return formatSeconds(value * scale)
   if (unit === 'By') return formatBytes(value)
   if (unit === '%') return `${sig(value)}%`
   if (unit === '' || unit === '1') return formatNumber(value)

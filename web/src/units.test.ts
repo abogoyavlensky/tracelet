@@ -26,6 +26,7 @@ describe('formatValue', () => {
     expect(formatValue(12_345, { unit: '1', perSecond: false })).toBe('12.3k')
     expect(formatValue(42.123, { unit: '%', perSecond: false })).toBe('42.1%')
     expect(formatValue(3, { unit: 'Cel', perSecond: false })).toBe('3 Cel')
+    expect(formatValue(3, { unit: 'constructor', perSecond: false })).toBe('3 constructor')
     expect(formatValue(0.000123, plain)).toBe('0.000123')
   })
 
