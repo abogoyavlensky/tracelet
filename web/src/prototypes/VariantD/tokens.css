@@ -1,0 +1,8 @@
+/* Variant D uses B's palette (.proto-b) and adds A's error hatching. */
+.proto-d .error-hatch {
+  background-image: repeating-linear-gradient(
+    -45deg,
+    var(--error) 0 3px,
+    color-mix(in srgb, var(--error) 55%, transparent) 3px 6px
+  );
+}

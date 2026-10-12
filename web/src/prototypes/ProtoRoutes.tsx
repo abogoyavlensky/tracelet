@@ -8,17 +8,21 @@ import { LogsScreen as LogsB } from './VariantB/LogsScreen'
 import { TraceScreen as TraceB } from './VariantB/TraceScreen'
 import { LogsScreen as LogsC } from './VariantC/LogsScreen'
 import { TraceScreen as TraceC } from './VariantC/TraceScreen'
+import { LogsScreen as LogsD } from './VariantD/LogsScreen'
+import { TraceScreen as TraceD } from './VariantD/TraceScreen'
 
 const screens: Record<string, Record<string, () => React.JSX.Element>> = {
   a: { logs: LogsA, trace: TraceA },
   b: { logs: LogsB, trace: TraceB },
   c: { logs: LogsC, trace: TraceC },
+  d: { logs: LogsD, trace: TraceD },
 }
 
 const names: Record<string, string> = {
   a: 'A, dense table',
   b: 'B, split pane',
   c: 'C, calm cards',
+  d: "D, B with a full-width list and A's time grid",
 }
 
 export function ProtoIndex() {

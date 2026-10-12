@@ -55,7 +55,7 @@ export function Header({ active }: { active: 'logs' | 'traces' }) {
 }
 
 /** A small waterfall glyph: the product's mark. */
-function Mark() {
+export function Mark() {
   return (
     <svg width="22" height="22" viewBox="0 0 22 22" aria-hidden="true">
       <rect x="2" y="4" width="11" height="3" rx="1.5" className="fill-accent" />
