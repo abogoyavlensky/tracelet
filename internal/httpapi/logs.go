@@ -86,13 +86,11 @@ func (h *Handler) parseSearch(q url.Values) (searchParams, error) {
 		}
 		sp.limit = n
 	}
-	for _, s := range q["attr"] {
-		a, err := query.ParseAttr(s)
-		if err != nil {
-			return sp, err
-		}
-		sp.attrs = append(sp.attrs, a)
+	attrs, err := parseAttrs(q)
+	if err != nil {
+		return sp, err
 	}
+	sp.attrs = attrs
 	return sp, nil
 }
 

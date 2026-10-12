@@ -58,7 +58,7 @@ func newSearchHandler(t *testing.T) http.Handler {
 		testSpan("p1", "api", traceHealth, "00000000000000d1", "", "GET /health", ago(20), 2*time.Millisecond, 0),
 		testSpan("p1", "api", traceOld, "00000000000000e1", "", "GET /old", searchNow.Add(-10*24*time.Hour), time.Millisecond, 0),
 		testSpan(string(other.ID), "web", traceShop, "00000000000000f1", "", "GET /other", ago(5), time.Millisecond, 0),
-	}})
+	}, Points: metricFixture(ago)})
 	require.NoError(t, err)
 
 	return httpapi.NewHandler(httpapi.Deps{
@@ -177,5 +177,7 @@ func TestServicesIncludesSpans(t *testing.T) {
 	got := decode[struct {
 		Items []query.ServiceCount `json:"items"`
 	}](t, rec)
-	assert.Equal(t, []query.ServiceCount{{Service: "api", Logs: 2, Spans: 2}, {Service: "worker", Logs: 1, Spans: 1}}, got.Items)
+	assert.Equal(t, []query.ServiceCount{
+		{Service: "api", Logs: 2, Spans: 2, Points: 3}, {Service: "worker", Logs: 1, Spans: 1, Points: 1},
+	}, got.Items)
 }
