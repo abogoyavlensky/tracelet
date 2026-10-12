@@ -20,6 +20,7 @@ import './tokens.css'
 export function TraceScreen() {
   const rows = useMemo(() => buildWaterfall(trace), [])
   const [selected, setSelected] = useState(errorSpanId)
+  const [reading, setReading] = useState(false)
   const span = rows.find((r) => r.span.span_id === selected)?.span ?? rows[0].span
   const root = rows[0].span
   const colorOf = (service: string) => rows.find((r) => r.span.service === service)?.colorIndex ?? 0
@@ -59,7 +60,9 @@ export function TraceScreen() {
         </div>
       </section>
       <div className="grid min-h-0 flex-1 grid-cols-1 md:grid-cols-[1fr_minmax(380px,40%)]">
-        <div className="min-h-0 min-w-0 overflow-y-auto bg-surface pb-16 md:pb-0">
+        <div
+          className={`min-h-0 min-w-0 overflow-y-auto bg-surface pb-16 md:block md:pb-0 ${reading ? 'hidden' : 'block'}`}
+        >
           <div className="flex items-center justify-between border-b border-line px-4 py-1.5 text-xs text-muted">
             <span>1 span is waiting for its parent; refresh to fill the trace in.</span>
             <button className="flex items-center gap-1 hover:text-fg">
@@ -72,11 +75,14 @@ export function TraceScreen() {
               key={r.span.span_id}
               row={r}
               on={r.span.span_id === span.span_id}
-              onSelect={() => setSelected(r.span.span_id)}
+              onSelect={() => {
+                setSelected(r.span.span_id)
+                setReading(true)
+              }}
             />
           ))}
         </div>
-        <SpanPane span={span} />
+        <SpanPane span={span} reading={reading} onBack={() => setReading(false)} />
       </div>
       <TabBar active="traces" />
     </div>
@@ -136,13 +142,22 @@ function Row({ row: r, on, onSelect }: { row: WaterfallRow; on: boolean; onSelec
   )
 }
 
-function SpanPane({ span }: { span: Span }) {
+function SpanPane({ span, reading, onBack }: { span: Span; reading: boolean; onBack: () => void }) {
   const [onlySpan, setOnlySpan] = useState(false)
   const failed = span.status_code === 2
   const logs = onlySpan ? traceLogs.filter((l) => l.span_id === span.span_id) : traceLogs
   return (
-    <aside className="hidden min-h-0 overflow-y-auto border-l border-line bg-surface md:block">
-      <div className="px-6 py-5">
+    <aside
+      className={`min-h-0 overflow-y-auto border-l border-line bg-surface pb-16 md:block md:pb-0 ${reading ? 'block' : 'hidden'}`}
+    >
+      <button
+        onClick={onBack}
+        className="flex h-11 items-center gap-1 px-3 text-sm text-accent md:hidden"
+      >
+        <icons.chevronLeft size={18} />
+        Waterfall
+      </button>
+      <div className="px-4 pb-5 md:px-6 md:pt-5">
         <div className="flex flex-wrap items-center gap-2 text-xs">
           <span
             className={`rounded-full px-2 py-0.5 font-medium ${failed ? 'bg-error/10 text-error' : 'bg-raised text-muted'}`}

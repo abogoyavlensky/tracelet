@@ -9,6 +9,8 @@ import './tokens.css'
 
 export function LogsScreen() {
   const [selected, setSelected] = useState(1)
+  // Phones show the list or the record, never both.
+  const [reading, setReading] = useState(false)
   const logs = logsPage.items
   const log = logs[selected]
 
@@ -16,7 +18,9 @@ export function LogsScreen() {
     <div className="proto-b flex h-dvh flex-col bg-canvas font-sans text-fg">
       <Header active="logs" />
       <div className="grid min-h-0 flex-1 grid-cols-1 md:grid-cols-[minmax(360px,36%)_1fr]">
-        <aside className="flex min-h-0 min-w-0 flex-col border-r border-line bg-surface">
+        <aside
+          className={`min-h-0 min-w-0 flex-col border-r border-line bg-surface md:flex ${reading ? 'hidden' : 'flex'}`}
+        >
           <div className="space-y-2 border-b border-line p-3">
             <label className="flex h-9 items-center gap-2 rounded-md bg-raised px-2.5 focus-within:ring-2 focus-within:ring-accent/40">
               <icons.search size={15} className="text-subtle" />
@@ -37,7 +41,15 @@ export function LogsScreen() {
           </p>
           <ul className="min-h-0 flex-1 overflow-y-auto pb-16 md:pb-0">
             {logs.map((l, i) => (
-              <Item key={i} log={l} on={i === selected} onSelect={() => setSelected(i)} />
+              <Item
+                key={i}
+                log={l}
+                on={i === selected}
+                onSelect={() => {
+                  setSelected(i)
+                  setReading(true)
+                }}
+              />
             ))}
             <li className="p-3">
               <button className="h-9 w-full rounded-md border border-line text-sm text-muted hover:bg-raised hover:text-fg">
@@ -46,7 +58,7 @@ export function LogsScreen() {
             </li>
           </ul>
         </aside>
-        <Reader log={log} />
+        <Reader log={log} reading={reading} onBack={() => setReading(false)} />
       </div>
       <TabBar active="logs" />
     </div>
@@ -83,12 +95,21 @@ function Item({ log, on, onSelect }: { log: Log; on: boolean; onSelect: () => vo
   )
 }
 
-function Reader({ log }: { log: Log }) {
+function Reader({ log, reading, onBack }: { log: Log; reading: boolean; onBack: () => void }) {
   const sev = severityName(log.severity_number)
   const stack = log.attributes?.['exception.stacktrace']
   return (
-    <article className="hidden min-h-0 overflow-y-auto bg-surface md:block">
-      <div className="mx-auto max-w-4xl px-8 py-7">
+    <article
+      className={`min-h-0 overflow-y-auto bg-surface pb-16 md:block md:pb-0 ${reading ? 'block' : 'hidden'}`}
+    >
+      <button
+        onClick={onBack}
+        className="flex h-11 items-center gap-1 px-3 text-sm text-accent md:hidden"
+      >
+        <icons.chevronLeft size={18} />
+        Logs
+      </button>
+      <div className="mx-auto max-w-4xl px-4 pb-7 md:px-8 md:pt-7">
         <div className="flex flex-wrap items-center gap-x-3 gap-y-1 text-sm text-muted">
           <span
             className={`rounded-full bg-current/10 px-2 py-0.5 text-xs font-medium ${severityTone[sev]}`}
@@ -98,7 +119,7 @@ function Reader({ log }: { log: Log }) {
           <span>{formatTimestamp(log.ts)}</span>
           <span>{log.service}</span>
         </div>
-        <h1 className="mt-3 whitespace-pre-wrap break-words font-mono text-[17px] leading-7 font-medium">
+        <h1 className="mt-3 whitespace-pre-wrap break-words font-mono text-[15px] leading-6 font-medium md:text-[17px] md:leading-7">
           {log.body}
         </h1>
         {typeof stack === 'string' && (
