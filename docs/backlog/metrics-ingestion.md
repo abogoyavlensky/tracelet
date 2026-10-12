@@ -1,6 +1,7 @@
 # Metrics are not ingested
 
-**Status: open**
+**Status: planned**
+Plan: docs/plans/2026-10-12-2159-metrics-slice.md
 
 ## Problem
 
