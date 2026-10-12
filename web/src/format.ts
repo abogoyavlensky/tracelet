@@ -65,14 +65,21 @@ export function formatTimestamp(ts: string): string {
   return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())} ${formatClock(ts)}`
 }
 
-/** Short local date and time for range labels: Oct 12, 14:03. */
+/** Short local date and time for range labels: Oct 12, 14:03 (24-hour, like the rows). */
 export function formatShort(ts: string): string {
-  return new Date(epochMs(ts)).toLocaleString(undefined, {
-    month: 'short',
-    day: 'numeric',
-    hour: '2-digit',
-    minute: '2-digit',
-  })
+  const d = new Date(epochMs(ts))
+  return `${d.toLocaleDateString(undefined, { month: 'short', day: 'numeric' })}, ${pad(d.getHours())}:${pad(d.getMinutes())}`
+}
+
+/** A range for sentences: "14:03 to 15:03 on Oct 12", or both dates when they differ. */
+export function formatRange(from: string, to: string): string {
+  const a = new Date(epochMs(from))
+  const b = new Date(epochMs(to))
+  if (a.toDateString() === b.toDateString()) {
+    const hm = (d: Date) => `${pad(d.getHours())}:${pad(d.getMinutes())}`
+    return `${hm(a)} to ${hm(b)} on ${a.toLocaleDateString(undefined, { month: 'short', day: 'numeric' })}`
+  }
+  return `${formatShort(from)} to ${formatShort(to)}`
 }
 
 export const levels = ['trace', 'debug', 'info', 'warn', 'error', 'fatal'] as const

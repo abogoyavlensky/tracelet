@@ -1,5 +1,13 @@
-import { describe, expect, it } from 'vitest'
-import { formatDuration, nsSince, severityName, spanKindName, spanStatusName } from './format'
+import { afterAll, beforeAll, describe, expect, it, vi } from 'vitest'
+import {
+  formatRange,
+  formatShort,
+  formatDuration,
+  nsSince,
+  severityName,
+  spanKindName,
+  spanStatusName,
+} from './format'
 
 describe('formatDuration', () => {
   it.each([
@@ -55,5 +63,20 @@ describe('nsSince', () => {
 
   it('handles offsets other than Z', () => {
     expect(nsSince('2026-10-12T10:00:00Z', '2026-10-12T12:00:00+02:00')).toBe(0)
+  })
+})
+
+describe('range labels', () => {
+  beforeAll(() => vi.stubEnv('TZ', 'Europe/London'))
+  afterAll(() => vi.unstubAllEnvs())
+
+  it('uses 24-hour times and names the day once when the range stays within it', () => {
+    expect(formatShort('2026-10-12T16:12:00Z')).toMatch(/12, 17:12$/)
+    expect(formatRange('2026-10-12T16:12:00Z', '2026-10-12T17:12:00Z')).toMatch(
+      /^17:12 to 18:12 on .*12$/,
+    )
+    expect(formatRange('2026-10-11T22:30:00Z', '2026-10-12T00:30:00Z')).toMatch(
+      /11, 23:30 to .*12, 01:30$/,
+    )
   })
 })
