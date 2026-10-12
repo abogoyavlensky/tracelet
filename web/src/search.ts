@@ -2,7 +2,7 @@
 // the URL, validated, and turned into API params. The URL format is plain
 // query strings (repeated keys for lists), not TanStack's JSON default, so
 // links stay readable: ?project=shop&attr=user.id:42&last=1h.
-import type { LogsParams, SpansParams } from './api'
+import type { LogsParams, MetricQueryParams, MetricsParams, SpansParams } from './api'
 import { type Level, levels } from './format'
 import { isGoDuration, normalizeRange, rangeParams, type TimeRange } from './timeRange'
 
@@ -98,6 +98,25 @@ export type TraceSearch = {
   span?: string
 }
 
+export type MetricsSearch = RangeSearch & {
+  project?: string
+  service?: string
+  environment?: string
+  q?: string
+}
+
+export type MetricSearch = RangeSearch & {
+  project?: string
+  aggregate?: string
+  group_by?: string
+  service?: string
+  environment?: string
+  attr?: string[]
+  step?: string
+}
+
+const aggregatePattern = /^(rate|increase|avg|min|max|sum|p[0-9]{1,2}(\.[0-9])?)$/
+
 export function validateLogsSearch(raw: Raw): LogsSearch {
   return {
     project: str(raw.project),
@@ -121,6 +140,31 @@ export function validateTracesSearch(raw: Raw): TracesSearch {
     min_duration: minDuration && isGoDuration(minDuration) ? minDuration : undefined,
     root: str(raw.root) === 'false' ? false : undefined,
     attr: attrs(raw.attr),
+    ...rangeSearch(raw),
+  }
+}
+
+export function validateMetricsSearch(raw: Raw): MetricsSearch {
+  return {
+    project: str(raw.project),
+    service: str(raw.service),
+    environment: str(raw.environment),
+    q: str(raw.q),
+    ...rangeSearch(raw),
+  }
+}
+
+export function validateMetricSearch(raw: Raw): MetricSearch {
+  const aggregate = str(raw.aggregate)
+  const step = str(raw.step)
+  return {
+    project: str(raw.project),
+    aggregate: aggregate && aggregatePattern.test(aggregate) ? aggregate : undefined,
+    group_by: str(raw.group_by),
+    service: str(raw.service),
+    environment: str(raw.environment),
+    attr: attrs(raw.attr),
+    step: step && isGoDuration(step) ? step : undefined,
     ...rangeSearch(raw),
   }
 }
@@ -178,6 +222,30 @@ export function spansApiParams(s: TracesSearch, cursor?: string): SpansParams {
     root: s.root === false ? undefined : true,
     attr: s.attr,
     ...rangeOrCursor(s, cursor),
+  })
+}
+
+export function metricsApiParams(s: MetricsSearch): MetricsParams {
+  return compact({
+    project: s.project,
+    service: s.service,
+    environment: s.environment,
+    q: s.q,
+    ...rangeParams(normalizeRange(s) as TimeRange),
+  })
+}
+
+export function metricApiParams(name: string, s: MetricSearch): MetricQueryParams {
+  return compact({
+    project: s.project,
+    name,
+    aggregate: s.aggregate,
+    group_by: s.group_by,
+    service: s.service,
+    environment: s.environment,
+    attr: s.attr,
+    step: s.step,
+    ...rangeParams(normalizeRange(s) as TimeRange),
   })
 }
 

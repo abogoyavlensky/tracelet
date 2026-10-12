@@ -1,12 +1,16 @@
 import { describe, expect, it } from 'vitest'
 import {
   logsApiParams,
+  metricApiParams,
+  metricsApiParams,
   parseSearchString,
   parseTraceId,
   safeNext,
   spansApiParams,
   stringifySearch,
   validateLogsSearch,
+  validateMetricSearch,
+  validateMetricsSearch,
   validateTraceSearch,
   validateTracesSearch,
 } from './search'
@@ -149,5 +153,56 @@ describe('safeNext', () => {
     expect(safeNext('https://evil.example')).toBeUndefined()
     expect(safeNext('/\\evil.example')).toBeUndefined()
     expect(safeNext(undefined)).toBeUndefined()
+  })
+})
+
+describe('metric searches', () => {
+  it('validates the catalog search', () => {
+    expect(validateMetricsSearch({ project: 'shop', q: 'orders', last: '6h', junk: 'x' })).toEqual({
+      project: 'shop',
+      service: undefined,
+      environment: undefined,
+      q: 'orders',
+      last: '6h',
+      from: undefined,
+      to: undefined,
+    })
+    expect(metricsApiParams({ project: 'shop', q: 'orders', last: '6h' })).toEqual({
+      project: 'shop',
+      q: 'orders',
+      last: '6h',
+    })
+  })
+
+  it('drops an invalid step and aggregate, keeping every key it owns', () => {
+    const s = validateMetricSearch({ step: 'often', aggregate: 'median', group_by: 'http.route' })
+    expect(s).toHaveProperty('step', undefined)
+    expect(s).toHaveProperty('aggregate', undefined)
+    expect(s.group_by).toBe('http.route')
+    expect(validateMetricSearch({ step: '5m', aggregate: 'p99.9' })).toMatchObject({
+      step: '5m',
+      aggregate: 'p99.9',
+    })
+  })
+
+  it('builds query params with the name', () => {
+    expect(
+      metricApiParams('orders.created', {
+        project: 'shop',
+        aggregate: 'increase',
+        group_by: 'service',
+        attr: ['plan:pro'],
+        from: '2026-10-12T10:00:00Z',
+        to: '2026-10-12T11:00:00Z',
+      }),
+    ).toEqual({
+      project: 'shop',
+      name: 'orders.created',
+      aggregate: 'increase',
+      group_by: 'service',
+      attr: ['plan:pro'],
+      from: '2026-10-12T10:00:00Z',
+      to: '2026-10-12T11:00:00Z',
+    })
   })
 })
