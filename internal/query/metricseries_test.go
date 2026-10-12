@@ -530,3 +530,20 @@ func TestGroupWithoutDeltasIsKept(t *testing.T) {
 		assertValues(t, []any{nil, nil}, groups["worker"])
 	})
 }
+
+// A series that switches between integer and double values keeps its deltas
+// and its resets.
+func TestCounterMixedRepresentation(t *testing.T) {
+	t.Parallel()
+	storages(t, func(t *testing.T, cold bool) {
+		old := mt0.Add(-time.Hour)
+		snap := withPoints(t, cold,
+			counterPoint(1, minute(0), old, 10, true),
+			counterPoint(1, minute(1), old, 15, false),
+			counterPoint(1, minute(2), old, 18, true),
+			counterPoint(1, minute(3), old, 4, false), // a drop: reset
+		)
+		res := metricQuery(t, snap, query.MetricQueryParams{Name: "jobs", Aggregate: "increase", Range: query.Range{From: minute(1), To: minute(4)}})
+		assertValues(t, []any{5.0, 3.0, 4.0}, res.Series[0])
+	})
+}

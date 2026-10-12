@@ -63,22 +63,23 @@ type MetricResult struct {
 // difference from the previous point, element-wise for buckets; a bounds
 // change without a reset nulls only the bucket delta, because count and sum
 // do not depend on the buckets. Delta-temporality points are used as they
-// are. Integer values are subtracted as integers and converted after, so a
-// counter past 2^53 keeps its increments. Only deltas at or after the range
+// are. Two integer values are subtracted as integers and converted after,
+// so a counter past 2^53 keeps its increments; a series that switches between
+// integer and double values falls back to doubles. Only deltas at or after the range
 // start are kept.
 //
 // Placeholders in textual order: the group expression's, the source's, the
 // filter's, the start of the rows read (is_fresh), and the range start.
 const deltasCTE = `pts AS (
   SELECT series_hash, ts, start_ts, temporality, bucket_bounds, %s AS grp,
-         value_int::HUGEINT AS vi, value_double AS vd,
+         value_int::HUGEINT AS vi, coalesce(value_double, value_int::DOUBLE) AS v,
          "count"::BIGINT AS c, "sum" AS s, bucket_counts::BIGINT[] AS b
   FROM %s
   WHERE %s
 ),
 lagged AS (
   SELECT *, lag(ts) OVER w AS prev_ts, lag(start_ts) OVER w AS prev_start,
-         lag(vi) OVER w AS prev_vi, lag(vd) OVER w AS prev_vd,
+         lag(vi) OVER w AS prev_vi, lag(v) OVER w AS prev_v,
          lag(c) OVER w AS prev_c, lag(s) OVER w AS prev_s, lag(b) OVER w AS prev_b,
          lag(bucket_bounds) OVER w AS prev_bounds
   FROM pts
@@ -87,7 +88,7 @@ lagged AS (
 classified AS (
   SELECT *, temporality = 1 AS is_delta,
          prev_ts IS NOT NULL AND (start_ts IS DISTINCT FROM prev_start
-           OR coalesce(vi < prev_vi, false) OR coalesce(vd < prev_vd, false)
+           OR coalesce(vi < prev_vi, v < prev_v, false)
            OR coalesce(c < prev_c, false)) AS is_reset,
          prev_ts IS NULL AND start_ts IS NOT NULL AND start_ts >= ? AS is_fresh,
          prev_ts IS NOT NULL AND bucket_bounds IS DISTINCT FROM prev_bounds AS bounds_changed
@@ -95,8 +96,8 @@ classified AS (
 ),
 deltas AS (
   SELECT grp, series_hash, ts, bucket_bounds,
-         CASE WHEN is_delta OR is_reset OR is_fresh THEN coalesce(vi::DOUBLE, vd)
-              ELSE coalesce((vi - prev_vi)::DOUBLE, vd - prev_vd) END AS dv,
+         CASE WHEN is_delta OR is_reset OR is_fresh THEN v
+              ELSE coalesce((vi - prev_vi)::DOUBLE, v - prev_v) END AS dv,
          CASE WHEN is_delta OR is_reset OR is_fresh THEN c ELSE c - prev_c END AS dc,
          CASE WHEN is_delta OR is_reset OR is_fresh THEN s ELSE s - prev_s END AS ds,
          CASE WHEN is_delta OR is_reset OR is_fresh THEN b
