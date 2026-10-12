@@ -65,7 +65,7 @@ export function LoginPage({ next }: { next?: string }) {
             Create a token for this browser, so you can revoke it on its own if the device goes
             missing:
           </p>
-          <pre className="mt-2 overflow-x-auto rounded-md bg-raised p-3 font-mono text-xs text-fg">
+          <pre className="mt-2 rounded-md bg-raised p-3 font-mono text-xs break-words whitespace-pre-wrap text-fg">
             tracelet tokens create --scope read --name laptop
           </pre>
           <p className="mt-2">
