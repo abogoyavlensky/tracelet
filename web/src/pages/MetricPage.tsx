@@ -28,7 +28,7 @@ import {
 } from '../metrics'
 import { type MetricSearch, metricApiParams } from '../search'
 import { normalizeRange, rangeParams } from '../timeRange'
-import { axisFormatter, displayUnit, formatValue } from '../units'
+import { axisFormatter, displayUnit, formatValue, unitHeading } from '../units'
 
 const groupLabels: Record<string, string> = {
   '': 'None',
@@ -207,8 +207,8 @@ export function MetricPage({ name, search }: { name: string; search: MetricSearc
               <span className="rounded-full bg-raised px-2 py-0.5 text-[11.5px]">
                 {kindLabel(data)}
               </span>
-              {data.unit && <span className="font-mono">{data.unit}</span>}
               <span>{data.aggregate}</span>
+              {unitHeading(display) && <span>in {unitHeading(display)}</span>}
             </span>
           )}
         </div>

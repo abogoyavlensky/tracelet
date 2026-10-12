@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { displayUnit, formatNumber, formatValue } from './units'
+import { axisFormatter, displayUnit, formatNumber, formatValue, unitHeading } from './units'
 
 const plain = { unit: '', perSecond: false }
 
@@ -64,5 +64,22 @@ describe('formatNumber', () => {
     expect(formatNumber(1500)).toBe('1.5k')
     expect(formatNumber(2_500_000)).toBe('2.5M')
     expect(formatNumber(-4200)).toBe('-4.2k')
+  })
+})
+
+describe('axis ticks', () => {
+  it('drops counted words and /s, and keeps scaling units', () => {
+    expect(axisFormatter({ unit: '{order}', perSecond: true })(2.5)).toBe('2.5')
+    expect(axisFormatter({ unit: '', perSecond: true })(1500)).toBe('1.5k')
+    expect(axisFormatter({ unit: 's', perSecond: false })(0.25)).toBe('250 ms')
+    expect(axisFormatter({ unit: 'By', perSecond: true })(2048)).toBe('2 KiB')
+  })
+
+  it('names the unit once in the heading', () => {
+    expect(unitHeading({ unit: '{order}', perSecond: true })).toBe('order/s')
+    expect(unitHeading({ unit: '', perSecond: true })).toBe('per second')
+    expect(unitHeading({ unit: 's', perSecond: false })).toBe('s')
+    expect(unitHeading({ unit: '1', perSecond: false })).toBe('')
+    expect(unitHeading({ unit: 'By', perSecond: true })).toBe('By/s')
   })
 })

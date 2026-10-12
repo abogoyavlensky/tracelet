@@ -85,7 +85,13 @@ export function MetricChart({
             return splits.map((s) => axisTime(s, span))
           },
         },
-        { ...axis, size: 72, values: (_u, splits) => splits.map((s) => latest.current.formatY(s)) },
+        {
+          ...axis,
+          values: (_u, splits) => splits.map((s) => latest.current.formatY(s)),
+          // Wide enough for the longest tick label, about 7 px a character.
+          size: (_u, values) =>
+            Math.max(40, ...(values ?? []).map((v) => String(v).length * 7 + 18)),
+        },
       ],
       series: [
         {},

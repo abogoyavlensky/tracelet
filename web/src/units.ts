@@ -91,7 +91,20 @@ export function formatValue(value: number | null | undefined, display: DisplayUn
   return display.perSecond ? `${s}/s` : s
 }
 
-/** A y-axis tick formatter for a display unit. */
+/**
+ * A y-axis tick formatter for a display unit. Ticks drop a counted word such
+ * as {order} and the /s, which the chart's heading names once; units that
+ * scale (time, bytes) keep theirs, since the prefix changes along the axis.
+ */
 export function axisFormatter(display: DisplayUnit): (value: number) => string {
-  return (value) => formatValue(value, display)
+  const counted = display.unit === '' || display.unit === '1' || /^\{.+\}$/.test(display.unit)
+  if (counted) return (value) => formatNumber(value)
+  return (value) => formatValue(value, { unit: display.unit, perSecond: false })
+}
+
+/** The heading for a display unit: "order/s", "s", or "per second". */
+export function unitHeading(display: DisplayUnit): string {
+  const word = /^\{(.+)\}$/.exec(display.unit)?.[1] ?? (display.unit === '1' ? '' : display.unit)
+  if (display.perSecond) return word ? `${word}/s` : 'per second'
+  return word
 }
