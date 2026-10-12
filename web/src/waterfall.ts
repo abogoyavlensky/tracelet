@@ -27,6 +27,23 @@ export function serviceColorIndex(service: string): number {
   return Math.abs(h) % seriesCount
 }
 
+/**
+ * Colour slots for one trace's services: each takes its stable slot unless
+ * another service in the trace already holds it, then the next free one, so
+ * up to eight services in a trace never share a colour.
+ */
+export function assignServiceColors(services: string[]): Map<string, number> {
+  const slots = new Map<string, number>()
+  const taken = new Set<number>()
+  for (const service of [...new Set(services)].toSorted()) {
+    let slot = serviceColorIndex(service)
+    for (let i = 0; i < seriesCount && taken.has(slot); i++) slot = (slot + 1) % seriesCount
+    slots.set(service, slot)
+    taken.add(slot)
+  }
+  return slots
+}
+
 function byStart(a: Span, b: Span): number {
   const d = nsSince(b.ts, a.ts)
   if (d !== 0) return d
@@ -46,6 +63,7 @@ export function buildWaterfall(trace: Trace): WaterfallRow[] {
     }
   }
 
+  const colors = assignServiceColors(trace.spans.map((s) => s.service))
   const rows: WaterfallRow[] = []
   const visited = new Set<string>()
   const total = trace.duration_ns
@@ -60,7 +78,7 @@ export function buildWaterfall(trace: Trace): WaterfallRow[] {
       span: s,
       depth,
       orphan,
-      colorIndex: serviceColorIndex(s.service),
+      colorIndex: colors.get(s.service) ?? 0,
       hasChildren: kids.length > 0,
       ...bar(s),
     })

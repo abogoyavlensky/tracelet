@@ -1,0 +1,64 @@
+/* Variant A, dense table: cool instrument paper, graphite ink, one deep teal. */
+.proto-a {
+  --canvas: #f2f4f6;
+  --surface: #ffffff;
+  --raised: #e8ecf0;
+  --line: #d5dbe1;
+  --fg: #14202b;
+  --muted: #4f5e6b;
+  --subtle: #8796a3;
+  --accent: #0b7285;
+  --accent-fg: #ffffff;
+  --ok: #2b8a3e;
+  --error: #c92a2a;
+  --sev-trace: #9aa6b0;
+  --sev-debug: #6b7a86;
+  --sev-info: #1c6fb8;
+  --sev-warn: #c25e00;
+  --sev-error: #c92a2a;
+  --sev-fatal: #862e9c;
+  --series-0: #0b7285;
+  --series-1: #5f3dc4;
+  --series-2: #1971c2;
+  --series-3: #2f9e44;
+  --series-4: #9c36b5;
+  --series-5: #66a80f;
+  --series-6: #8a6d3b;
+  --series-7: #495057;
+}
+
+.dark .proto-a {
+  --canvas: #0c1216;
+  --surface: #11191e;
+  --raised: #182229;
+  --line: #24313a;
+  --fg: #d7e0e7;
+  --muted: #93a4b1;
+  --subtle: #62737f;
+  --accent: #3bc9db;
+  --accent-fg: #0c1216;
+  --ok: #69db7c;
+  --error: #ff6b6b;
+  --sev-trace: #62737f;
+  --sev-debug: #8798a5;
+  --sev-info: #4dabf7;
+  --sev-warn: #ffa94d;
+  --sev-error: #ff6b6b;
+  --sev-fatal: #e599f7;
+  --series-0: #3bc9db;
+  --series-1: #9775fa;
+  --series-2: #4dabf7;
+  --series-3: #69db7c;
+  --series-4: #da77f2;
+  --series-5: #a9e34b;
+  --series-6: #d8b36a;
+  --series-7: #adb5bd;
+}
+
+.proto-a .error-hatch {
+  background-image: repeating-linear-gradient(
+    -45deg,
+    var(--error) 0 3px,
+    color-mix(in srgb, var(--error) 55%, transparent) 3px 6px
+  );
+}

@@ -6,6 +6,7 @@ import {
   createRootRouteWithContext,
   createRoute,
   createRouter,
+  lazyRouteComponent,
   redirect,
 } from '@tanstack/react-router'
 import { ApiError } from './api'
@@ -98,9 +99,26 @@ export const traceRoute = createRoute({
   },
 })
 
+// Design prototypes on fixtures, in dev builds only (deleted after the design is chosen).
+const protoRoutes = import.meta.env.DEV
+  ? [
+      createRoute({
+        getParentRoute: () => rootRoute,
+        path: '_proto',
+        component: lazyRouteComponent(() => import('./prototypes/ProtoRoutes'), 'ProtoIndex'),
+      }),
+      createRoute({
+        getParentRoute: () => rootRoute,
+        path: '_proto/$variant/$screen',
+        component: lazyRouteComponent(() => import('./prototypes/ProtoRoutes'), 'ProtoScreen'),
+      }),
+    ]
+  : []
+
 const routeTree = rootRoute.addChildren([
   loginRoute,
   appRoute.addChildren([indexRoute, logsRoute, tracesRoute, traceRoute]),
+  ...protoRoutes,
 ])
 
 export function createAppRouter(queryClient: QueryClient) {

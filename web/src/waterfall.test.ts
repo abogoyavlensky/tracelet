@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest'
 import type { Span, Trace } from './api'
-import { buildWaterfall, serviceColorIndex } from './waterfall'
+import { assignServiceColors, buildWaterfall, serviceColorIndex } from './waterfall'
 
 const base = '2026-10-12T10:00:00Z'
 
@@ -110,12 +110,15 @@ describe('buildWaterfall', () => {
     expect(rows[1].widthPct).toBe(0.5)
   })
 
-  it('colours a service the same way everywhere', () => {
+  it('gives each service in a trace its own colour, preferring its stable slot', () => {
     const rows = buildWaterfall(
       trace([span('root', undefined, 0, 10, 'api'), span('w', 'root', 0, 5, 'worker')], 10),
     )
-    expect(rows[0].colorIndex).toBe(serviceColorIndex('api'))
-    expect(rows[1].colorIndex).toBe(serviceColorIndex('worker'))
+    expect(rows[0].colorIndex).not.toBe(rows[1].colorIndex)
+    const services = Array.from({ length: 8 }, (_, i) => `svc-${i}`)
+    const slots = assignServiceColors(services)
+    expect(new Set(slots.values()).size).toBe(8)
+    expect(assignServiceColors(['api']).get('api')).toBe(serviceColorIndex('api'))
     expect(serviceColorIndex('api')).toBeGreaterThanOrEqual(0)
     expect(serviceColorIndex('api')).toBeLessThan(8)
   })
