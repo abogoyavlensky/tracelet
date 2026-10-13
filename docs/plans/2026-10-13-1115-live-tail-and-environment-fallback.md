@@ -286,7 +286,7 @@ Every existing command keeps the same one-minute bound per request. Tests call `
 - Create: `web/src/components/useLiveTail.ts`
 - Modify: `web/src/components/FilterBar.tsx`, `web/src/pages/LogsPage.tsx`
 
-- [ ] **Step 1: The hook.** Write `useLiveTail({ enabled, search, firstPage, queryKey })`, which returns `{ arrivals, from, skippedAt, dismiss, error }`, driving `liveReducer` with `useReducer`. Its behaviour follows the design's UI section:
+- [x] **Step 1: The hook.** Write `useLiveTail({ enabled, search, firstPage, queryKey })`, which returns `{ arrivals, from, skippedAt, dismiss, error }`, driving `liveReducer` with `useReducer`. Its behaviour follows the design's UI section:
   - a `setTimeout` chain at 2000 ms, starting only after `firstPage` exists;
   - pausing on hidden visibility and polling immediately on visible;
   - `queryClient.fetchQuery({ queryKey: ['logs-tail', params], queryFn, gcTime: 0, staleTime: 0 })`;
@@ -295,16 +295,18 @@ Every existing command keeps the same one-minute bound per request. Tests call `
   - clearing timers on unmount or when `enabled` turns false;
   - dropping any response from an older generation, where a re-seed or reset starts a new generation.
   Keep the constants (`pollMs = 2000`, `maxArrivals = 500`) at the top of the file.
-- [ ] **Step 2: FilterBar.** Add an optional `actions?: ReactNode`, rendered just before the summary at every width.
-- [ ] **Step 3: LogsPage.**
+- [x] **Step 2: FilterBar.** Add an optional `actions?: ReactNode`, rendered just before the summary at every width.
+- [x] **Step 3: LogsPage.**
   - Compute `live = !!search.live && liveEligible(range)` and call the hook.
   - Build `items` with `mergeLive(arrivals, basePages, from)` when live, and hide "Load older".
   - Show the skipped-records notice while `skippedAt` is set, with a dismiss button; use the `sev-warn` tone.
   - Render the Live toggle: it sets `live: true` or `undefined` through `set`, is disabled with a title when the range is not relative, and shows the pulsing `accent` dot, or the warning tone with the error as its title.
   - Change the summary in live mode.
   - Use only semantic colour tokens from `web/src/index.css`.
-- [ ] **Step 4:** Run `cd web && npm run lint && npx vitest run`. Expected: PASS.
-- [ ] **Step 5: Commit.** `git commit -m "Live toggle on the logs page"`
+- [x] **Step 4:** Run `cd web && npm run lint && npx vitest run`. Expected: PASS.
+- [x] **Step 5: Commit.** `git commit -m "Live toggle on the logs page"`
+
+> Deviation: `LogsPage` merges when the hook's `from` is set instead of keying the memo on `live`; the React Compiler lint rejected a manual memo that listed `live` as a dependency, and `from` is set exactly while live runs on a seeded first page.
 
 ### Task 7: End-to-end check
 
