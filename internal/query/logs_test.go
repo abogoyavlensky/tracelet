@@ -161,6 +161,138 @@ func TestLogsSearchCursorKeepsRange(t *testing.T) {
 	assert.Equal(t, []string{"same ts a", "slow request"}, got, "later pages read the first page's window")
 }
 
+// writeLog stores one p1 log with the given timestamp and body, in its own
+// batch so its ingest stamp follows every earlier write.
+func writeLog(t *testing.T, e *env, ts time.Time, body string) {
+	t.Helper()
+	_, err := e.writer.Write(t.Context(), telemetry.Batch{Logs: []telemetry.Log{
+		{TS: ts, Project: "p1", Service: "api", Body: body},
+	}})
+	require.NoError(t, err)
+}
+
+func TestLogsItemsCarryIngestTS(t *testing.T) {
+	e := searchEnv(t)
+	page := search(t, e, query.LogsParams{})
+	seen := map[time.Time]bool{}
+	for _, l := range page.Items {
+		assert.False(t, l.IngestTS.IsZero(), l.Body)
+		seen[l.IngestTS] = true
+	}
+	assert.Len(t, seen, len(page.Items), "ingest stamps are distinct")
+}
+
+func TestLogsTailReturnsOnlyNewRows(t *testing.T) {
+	e := searchEnv(t)
+	first := search(t, e, query.LogsParams{})
+	require.NotEmpty(t, first.TailCursor)
+
+	writeLog(t, e, h1.Add(10*time.Minute), "late arrival") // older than "same ts b", shown already
+	writeLog(t, e, h1.Add(35*time.Minute), "new")
+	tail := search(t, e, query.LogsParams{Since: first.TailCursor})
+	assert.Equal(t, []string{"new", "late arrival"}, bodies(tail))
+	assert.Empty(t, tail.NextCursor)
+	assert.False(t, tail.Truncated)
+	require.NotEmpty(t, tail.TailCursor)
+
+	again := search(t, e, query.LogsParams{Since: tail.TailCursor})
+	assert.Empty(t, again.Items)
+	assert.NotEmpty(t, again.TailCursor, "an empty poll still returns a cursor")
+}
+
+func TestLogsTailKeepsFilters(t *testing.T) {
+	e := searchEnv(t)
+	first := search(t, e, query.LogsParams{Service: "worker"})
+	writeLog(t, e, h1.Add(35*time.Minute), "api row")
+	assert.Empty(t, search(t, e, query.LogsParams{Service: "worker", Since: first.TailCursor}).Items)
+}
+
+func TestLogsTailCatchesFutureRows(t *testing.T) {
+	e := newEnv(t)
+	writeLog(t, e, h0.Add(10*time.Minute), "old")
+	writeLog(t, e, h0.Add(45*time.Minute), "future") // stored, but after the first range's end
+	first := search(t, e, query.LogsParams{Range: query.Range{From: h0, To: h0.Add(30 * time.Minute)}})
+	assert.Equal(t, []string{"old"}, bodies(first))
+
+	tail := search(t, e, query.LogsParams{Range: query.Range{From: h0, To: h0.Add(time.Hour)}, Since: first.TailCursor})
+	assert.Equal(t, []string{"future"}, bodies(tail), "stored before the first page, reached by the wider range")
+}
+
+func TestLogsTailTruncates(t *testing.T) {
+	e := searchEnv(t)
+	first := search(t, e, query.LogsParams{})
+	for i, body := range []string{"n1", "n2", "n3"} {
+		writeLog(t, e, h1.Add(time.Duration(31+i)*time.Minute), body)
+	}
+	tail := search(t, e, query.LogsParams{Since: first.TailCursor, Limit: 2})
+	assert.Equal(t, []string{"n3", "n2"}, bodies(tail), "the newest limit rows")
+	assert.True(t, tail.Truncated)
+	assert.Empty(t, tail.NextCursor, "a tail is not paged")
+	assert.NotEmpty(t, tail.TailCursor)
+}
+
+func TestLogsTailAfterFlush(t *testing.T) {
+	e := newEnv(t)
+	e.writeLogs(t, h0, 5)
+	_, err := e.flusher.FlushAll(t.Context())
+	require.NoError(t, err)
+	hours, err := e.store.HotHours(t.Context(), "logs")
+	require.NoError(t, err)
+	require.Empty(t, hours, "hot logs are empty")
+
+	first := search(t, e, query.LogsParams{})
+	require.Len(t, first.Items, 5)
+	tail := search(t, e, query.LogsParams{Since: first.TailCursor})
+	assert.Empty(t, tail.Items, "the manifest's cutoff keeps the watermark with hot empty")
+
+	writeLog(t, e, h0.Add(30*time.Minute), "after the flush")
+	tail = search(t, e, query.LogsParams{Since: first.TailCursor})
+	assert.Equal(t, []string{"after the flush"}, bodies(tail))
+}
+
+// A snapshot S is open when log A (latest hour) and then a later-stamped late
+// log B (an old hour) are written and B's hour is flushed. S sees B through
+// the manifest but not A, so a watermark read from the manifest after the
+// pin would cover A's stamp and skip A for good.
+func TestLogsTailFlushDuringSnapshot(t *testing.T) {
+	e := newEnv(t)
+	writeLog(t, e, h0.Add(10*time.Minute), "base")
+	_, err := e.flusher.FlushAll(t.Context())
+	require.NoError(t, err)
+
+	s := e.open(t)
+	_, err = e.writer.Write(t.Context(), telemetry.Batch{Logs: []telemetry.Log{
+		{TS: h1.Add(10 * time.Minute), Project: "p1", Service: "api", Body: "A"},
+		{TS: h0.Add(20 * time.Minute), Project: "p1", Service: "api", Body: "B"},
+	}})
+	require.NoError(t, err)
+	_, err = e.flusher.FlushDue(t.Context(), h2)
+	require.NoError(t, err)
+
+	page, err := query.LogsSearch(t.Context(), s, query.LogsParams{ProjectID: "p1", Range: query.Range{From: h0, To: h2}})
+	require.NoError(t, err)
+	assert.NotContains(t, bodies(page), "A", "A was committed after the pin")
+	require.NotEmpty(t, page.TailCursor)
+
+	tail := search(t, e, query.LogsParams{Since: page.TailCursor})
+	assert.Contains(t, bodies(tail), "A", "the tail must not skip A")
+}
+
+func TestLogsTailValidation(t *testing.T) {
+	e := searchEnv(t)
+	first := search(t, e, query.LogsParams{})
+	snap := e.open(t)
+	for name, p := range map[string]query.LogsParams{
+		"since with cursor": {ProjectID: "p1", Since: first.TailCursor, Cursor: first.TailCursor},
+		"garbage since":     {ProjectID: "p1", Since: "!!", Range: query.Range{From: h0, To: h1}},
+		"not a tail":        {ProjectID: "p1", Since: "e30", Range: query.Range{From: h0, To: h1}},
+	} {
+		_, err := query.LogsSearch(t.Context(), snap, p)
+		var verr *query.ValidationError
+		assert.ErrorAs(t, err, &verr, name)
+	}
+}
+
 func TestLogsSearchValidation(t *testing.T) {
 	e := searchEnv(t)
 	snap := e.open(t)

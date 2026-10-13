@@ -122,3 +122,32 @@ func decodeCursor(s string) (position, error) {
 	}
 	return p, nil
 }
+
+// tail is a live-tail position: everything stamped at or below IngestTS, and
+// everything before To, has already been answered.
+type tail struct {
+	IngestTS time.Time `json:"ingest_ts"`
+	To       time.Time `json:"to"`
+}
+
+func encodeTail(t tail) string {
+	b, err := json.Marshal(t)
+	if err != nil {
+		panic(fmt.Sprintf("encode tail cursor: %v", err)) // times always marshal
+	}
+	return base64.RawURLEncoding.EncodeToString(b)
+}
+
+// decodeTail reads a tail cursor. A zero IngestTS is valid, a tail taken
+// before anything was stored; a zero To is not.
+func decodeTail(s string) (tail, error) {
+	var t tail
+	b, err := base64.RawURLEncoding.DecodeString(s)
+	if err != nil {
+		return t, invalid("invalid since")
+	}
+	if err := json.Unmarshal(b, &t); err != nil || t.To.IsZero() {
+		return t, invalid("invalid since")
+	}
+	return t, nil
+}

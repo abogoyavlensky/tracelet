@@ -163,9 +163,9 @@ Every existing command keeps the same one-minute bound per request. Tests call `
 **Files:**
 - Modify: `docs/backlog/live-log-tail.md`, `docs/backlog/deprecated-environment-attribute.md`
 
-- [ ] **Step 1:** `git switch -c live-tail master`.
-- [ ] **Step 2:** In both backlog entries, change `**Status: open**` to `**Status: planned**`, with `Plan: docs/plans/2026-10-13-1115-live-tail-and-environment-fallback.md` on the next line.
-- [ ] **Step 3:** Commit the plan and the two status changes: `git commit -m "Plan live log tail and the environment attribute fallback"`.
+- [x] **Step 1:** `git switch -c live-tail master`.
+- [x] **Step 2:** In both backlog entries, change `**Status: open**` to `**Status: planned**`, with `Plan: docs/plans/2026-10-13-1115-live-tail-and-environment-fallback.md` on the next line.
+- [x] **Step 3:** Commit the plan and the two status changes: `git commit -m "Plan live log tail and the environment attribute fallback"`.
 
 ### Task 1: Environment attribute fallback
 
@@ -173,12 +173,12 @@ Every existing command keeps the same one-minute bound per request. Tests call `
 - Modify: `internal/otlp/resource.go`
 - Test: `internal/otlp/logs_test.go`
 
-- [ ] **Step 1: Write the failing tests.** Add a table test converting a logs request whose resource has (a) only `deployment.environment=staging`, which gives `staging`; (b) both keys, `deployment.environment.name=prod` and `deployment.environment=staging`, which gives `prod`; (c) neither, which gives `default`. The resource JSON keeps whatever attributes were sent.
-- [ ] **Step 2:** Run `go test ./internal/otlp/ -run Environment`. Expected: FAIL on (a).
-- [ ] **Step 3: Implement.** Add `attrEnvironmentDeprecated = "deployment.environment"` and read it in `resourceInfo` only when the new key is empty. Update `DefaultEnvironment`'s comment. Spans and metrics share `resourceInfo`, so they get the fallback too. The metric series hash covers the raw resource attributes and is unchanged.
-- [ ] **Step 4:** Run `go test ./internal/otlp/`. Expected: PASS.
-- [ ] **Step 5: Docs.** In `README.md`, after the sentence listing the three resource attributes, add: `` Records sent with the older `deployment.environment` key, which semantic conventions before v1.27 used, file under its value when `deployment.environment.name` is absent. `` In `docs/DESIGN.md`, change the Environment row's note to `Optional, defaults to \`default\`; falls back to the pre-1.27 \`deployment.environment\``.
-- [ ] **Step 6: Commit.** `git commit -m "Fall back to the deprecated deployment.environment attribute"`
+- [x] **Step 1: Write the failing tests.** Add a table test converting a logs request whose resource has (a) only `deployment.environment=staging`, which gives `staging`; (b) both keys, `deployment.environment.name=prod` and `deployment.environment=staging`, which gives `prod`; (c) neither, which gives `default`. The resource JSON keeps whatever attributes were sent.
+- [x] **Step 2:** Run `go test ./internal/otlp/ -run Environment`. Expected: FAIL on (a).
+- [x] **Step 3: Implement.** Add `attrEnvironmentDeprecated = "deployment.environment"` and read it in `resourceInfo` only when the new key is empty. Update `DefaultEnvironment`'s comment. Spans and metrics share `resourceInfo`, so they get the fallback too. The metric series hash covers the raw resource attributes and is unchanged.
+- [x] **Step 4:** Run `go test ./internal/otlp/`. Expected: PASS.
+- [x] **Step 5: Docs.** In `README.md`, after the sentence listing the three resource attributes, add: `` Records sent with the older `deployment.environment` key, which semantic conventions before v1.27 used, file under its value when `deployment.environment.name` is absent. `` In `docs/DESIGN.md`, change the Environment row's note to `Optional, defaults to \`default\`; falls back to the pre-1.27 \`deployment.environment\``.
+- [x] **Step 6: Commit.** `git commit -m "Fall back to the deprecated deployment.environment attribute"`
 
 ### Task 2: Tail cursor and `since` in the logs query
 
@@ -186,7 +186,7 @@ Every existing command keeps the same one-minute bound per request. Tests call `
 - Modify: `internal/query/snapshot.go`, `internal/query/range.go`, `internal/query/logs.go`
 - Test: `internal/query/logs_test.go`
 
-- [ ] **Step 1: Write the failing tests** with the existing `searchEnv`/`newEnv` helpers. Write rows with `e.writer.Write` between searches so stamps increase.
+- [x] **Step 1: Write the failing tests** with the existing `searchEnv`/`newEnv` helpers. Write rows with `e.writer.Write` between searches so stamps increase.
   - **`TestLogsTailReturnsOnlyNewRows`:** search the range and keep `TailCursor`. Write two rows, one with a `ts` older than the newest row already shown (a late arrival). Search with `Since`: both come back, newest `ts` first. Search again with the new cursor: nothing.
   - **`TestLogsTailCatchesFutureRows`:** write a row with `ts` after the range's `to`. Search `[from, to)` and keep the cursor. Search with `Since` and a range that now includes that `ts`: the row comes back.
   - **`TestLogsTailTruncates`:** write `limit+1` new rows. The `Since` search returns `limit` items, `Truncated` is true, and `NextCursor` is empty.
@@ -194,22 +194,22 @@ Every existing command keeps the same one-minute bound per request. Tests call `
   - **`TestLogsTailFlushDuringSnapshot`:** flush so hot logs are empty, then open a snapshot S. Write log A in the latest hour and a later-stamped late log B in an old hour, then flush B's hour. `LogsSearch` on S does not show A. A `Since` search with S's `TailCursor` on a fresh snapshot returns A.
   - Every item carries a non-zero `IngestTS`, and the stamps are distinct.
   - **Validation:** `Since` together with `Cursor` and a garbage `Since` are both validation errors.
-- [ ] **Step 2:** Run `go test ./internal/query/ -run LogsTail`. Expected: FAIL (fields missing).
-- [ ] **Step 3: Implement the watermark.** In `Open`, after `gate.Acquire` and before `BeginTx`, read `m.MaxIngestTS(ctx)` into a new `Snapshot.coldMax` field. Add `Snapshot.Watermark(ctx, signal) (time.Time, error)`:
+- [x] **Step 2:** Run `go test ./internal/query/ -run LogsTail`. Expected: FAIL (fields missing).
+- [x] **Step 3: Implement the watermark.** In `Open`, after `gate.Acquire` and before `BeginTx`, read `m.MaxIngestTS(ctx)` into a new `Snapshot.coldMax` field. Add `Snapshot.Watermark(ctx, signal) (time.Time, error)`:
   - check the signal with `duckdb.CheckSignal`;
   - run `SELECT max(ingest_ts) FROM <signal>` on `s.tx`;
   - return the later of that and `s.coldMax`, or the zero time when both are empty.
   Its doc comment must state the prefix argument from the design and why both a maximum over `Source` and a post-pin manifest read would be wrong. Add `IngestTS` to `query.Log` and set it in `scanLog`.
-- [ ] **Step 4: Implement the tail cursor** in `range.go`: `tail`, `encodeTail`, and `decodeTail`, mirroring `encodeCursor`/`decodeCursor`. A decoded tail with a zero `To` is invalid; a zero `IngestTS` is allowed.
-- [ ] **Step 5: Implement `since` in `LogsSearch`.**
+- [x] **Step 4: Implement the tail cursor** in `range.go`: `tail`, `encodeTail`, and `decodeTail`, mirroring `encodeCursor`/`decodeCursor`. A decoded tail with a zero `To` is invalid; a zero `IngestTS` is allowed.
+- [x] **Step 5: Implement `since` in `LogsSearch`.**
   - Add `LogsParams.Since string` and `` LogsPage.TailCursor string `json:"tail_cursor,omitempty"` ``.
   - Reject `Since` with `Cursor` (`invalid("since cannot be combined with cursor")`).
   - With `Since`, decode it and add `f.add("(ingest_ts > ? OR ts >= ?)", t.IngestTS, t.To)`.
   - After the query, take `Watermark(ctx, "logs")` from the same snapshot. Set `TailCursor` to `encodeTail(tail{IngestTS: max(W, since.IngestTS), To: rng.To})` on every response, including `cursor` pages; it is harmless there.
   - In `since` mode, keep `Truncated` but never set `NextCursor`.
   - Update `LogsSearch`'s doc comment.
-- [ ] **Step 6:** Run `go test -race ./internal/query/`. Expected: PASS.
-- [ ] **Step 7: Commit.** `git commit -m "Add a live-tail cursor to the logs search"`
+- [x] **Step 6:** Run `go test -race ./internal/query/`. Expected: PASS.
+- [x] **Step 7: Commit.** `git commit -m "Add a live-tail cursor to the logs search"`
 
 ### Task 3: `since` over HTTP and in OpenAPI
 
