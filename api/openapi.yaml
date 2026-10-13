@@ -100,6 +100,46 @@ paths:
         "415": { $ref: "#/components/responses/Error" }
         "503": { $ref: "#/components/responses/Unavailable" }
 
+  /v1/metrics:
+    post:
+      summary: Ingest OTLP/HTTP metrics
+      description: |
+        An OTLP `ExportMetricsServiceRequest` in protobuf, optionally gzipped.
+        Needs an `ingest` token. The body may be at most 4 MB, before and
+        after decompression. A 200 means the points are stored. Gauges, sums,
+        and explicit-bucket histograms are accepted. Exponential histograms,
+        summaries, delta up-down counters, and invalid points are rejected
+        and named in `partial_success`. A point whose series, start time, and
+        time are already stored in the hot window is dropped and counted as
+        `duplicate_points` on health. Exemplars are not stored. OTLP/JSON is
+        not supported yet and gets 415.
+      operationId: ingestMetrics
+      security:
+        - bearer: []
+      parameters:
+        - name: Content-Encoding
+          in: header
+          schema: { type: string, enum: [gzip, identity] }
+      requestBody:
+        required: true
+        content:
+          application/x-protobuf:
+            schema: { type: string, format: binary }
+      responses:
+        "200":
+          description: |
+            An `ExportMetricsServiceResponse`; its `partial_success` names
+            rejected data points and the reason.
+          content:
+            application/x-protobuf:
+              schema: { type: string, format: binary }
+        "400": { $ref: "#/components/responses/Error" }
+        "401": { $ref: "#/components/responses/Error" }
+        "403": { $ref: "#/components/responses/Error" }
+        "413": { $ref: "#/components/responses/Error" }
+        "415": { $ref: "#/components/responses/Error" }
+        "503": { $ref: "#/components/responses/Unavailable" }
+
   /api/v1/health:
     get:
       summary: Server health and counters
@@ -423,8 +463,8 @@ paths:
 
   /api/v1/services:
     get:
-      summary: Services with logs or spans in a range
-      description: Needs a `read` token. Busiest first, by logs and spans together.
+      summary: Services with logs, spans, or metric points in a range
+      description: Needs a `read` token. Busiest first, by the three counts together.
       operationId: listServices
       parameters:
         - $ref: "#/components/parameters/Project"
@@ -444,12 +484,128 @@ paths:
                     type: array
                     items:
                       type: object
-                      required: [service, logs, spans]
+                      required: [service, logs, spans, points]
                       properties:
                         service: { type: string }
                         logs: { type: integer }
                         spans: { type: integer }
+                        points: { type: integer, description: Metric points. }
                   range: { $ref: "#/components/schemas/Range" }
+        "400": { $ref: "#/components/responses/Error" }
+        "401": { $ref: "#/components/responses/Error" }
+        "403": { $ref: "#/components/responses/Error" }
+        "404": { $ref: "#/components/responses/Error" }
+        "503": { $ref: "#/components/responses/Unavailable" }
+
+  /api/v1/metrics:
+    get:
+      summary: List metrics
+      description: |
+        Needs a `read` token. The metrics with points in the range, one item
+        per name and kind, ordered by name, at most 1,000 with `truncated`
+        set past that. Without a range it is the last hour.
+      operationId: listMetrics
+      parameters:
+        - $ref: "#/components/parameters/Project"
+        - { name: service, in: query, schema: { type: string } }
+        - { name: environment, in: query, schema: { type: string } }
+        - { name: q, in: query, description: Case-insensitive substring of the name., schema: { type: string } }
+        - $ref: "#/components/parameters/From"
+        - $ref: "#/components/parameters/To"
+        - $ref: "#/components/parameters/Last"
+      responses:
+        "200":
+          description: The catalog
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/MetricsList" }
+        "400": { $ref: "#/components/responses/Error" }
+        "401": { $ref: "#/components/responses/Error" }
+        "403": { $ref: "#/components/responses/Error" }
+        "404": { $ref: "#/components/responses/Error" }
+        "503": { $ref: "#/components/responses/Unavailable" }
+
+  /api/v1/metrics/attributes:
+    get:
+      summary: Attribute keys of one metric
+      description: |
+        Needs a `read` token. The point attribute keys of the metric in the
+        range, ordered by key, at most 100, each with its number of distinct
+        values and the first 20 values in order. Use them for `group_by` and
+        `attr` in a metric query.
+      operationId: metricAttributes
+      parameters:
+        - $ref: "#/components/parameters/Project"
+        - { name: name, in: query, required: true, schema: { type: string } }
+        - { name: service, in: query, schema: { type: string } }
+        - { name: environment, in: query, schema: { type: string } }
+        - $ref: "#/components/parameters/From"
+        - $ref: "#/components/parameters/To"
+        - $ref: "#/components/parameters/Last"
+      responses:
+        "200":
+          description: The keys
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/MetricAttributes" }
+        "400": { $ref: "#/components/responses/Error" }
+        "401": { $ref: "#/components/responses/Error" }
+        "403": { $ref: "#/components/responses/Error" }
+        "404": { $ref: "#/components/responses/Error" }
+        "503": { $ref: "#/components/responses/Unavailable" }
+
+  /api/v1/metrics/query:
+    get:
+      summary: Query a metric over time
+      description: |
+        Needs a `read` token. The metric aggregated per step and group.
+        Aggregations depend on the kind; the first listed is the default:
+        a monotonic sum takes `rate` (per second) or `increase`; a gauge or
+        non-monotonic sum takes `avg`, `min`, `max`, or `sum`; a histogram
+        takes a quantile `pNN` or `pNN.N` (default `p95`), `rate`
+        (observations per second), or `avg`.
+
+        Counter and histogram values come from per-series deltas with reset
+        detection; a series that started inside the range counts its first
+        point in full. A step's value comes from the points whose time falls
+        in it, so the last step, which usually extends past `to`, can read
+        low until it completes. Steps with no data are null, never zero.
+
+        The range start is aligned down to the step, and the response's
+        `range` reports the aligned start. Without `step` the server picks
+        one of about 200 per range and at least a minute. At most 20 series
+        are returned, largest first, with `truncated` set past that. A
+        metric with no points in the range is a 404 naming the range; a name
+        with several kinds in the range is a 400 listing them.
+      operationId: queryMetric
+      parameters:
+        - $ref: "#/components/parameters/Project"
+        - { name: name, in: query, required: true, schema: { type: string } }
+        - { name: aggregate, in: query, schema: { type: string } }
+        - name: group_by
+          in: query
+          description: "`service`, `environment`, `version`, or a point attribute key."
+          schema: { type: string }
+        - { name: service, in: query, schema: { type: string } }
+        - { name: environment, in: query, schema: { type: string } }
+        - name: attr
+          in: query
+          description: Repeatable `key:value`, an exact match on a point attribute.
+          explode: true
+          schema: { type: array, items: { type: string } }
+        - name: step
+          in: query
+          description: A Go duration of whole seconds, at least `10s`, giving at most 1,500 steps.
+          schema: { type: string }
+        - $ref: "#/components/parameters/From"
+        - $ref: "#/components/parameters/To"
+        - $ref: "#/components/parameters/Last"
+      responses:
+        "200":
+          description: The series
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/MetricResult" }
         "400": { $ref: "#/components/responses/Error" }
         "401": { $ref: "#/components/responses/Error" }
         "403": { $ref: "#/components/responses/Error" }
@@ -664,6 +820,79 @@ components:
           items: { $ref: "#/components/schemas/Span" }
         range: { $ref: "#/components/schemas/Range" }
         truncated: { type: boolean, description: True when the trace has more than 5,000 spans in the range. }
+    MetricKind:
+      type: object
+      required: [type, monotonic]
+      properties:
+        type: { type: string, enum: [gauge, sum, histogram] }
+        monotonic: { type: boolean, description: For sums; a monotonic sum is a counter. }
+        unit: { type: string }
+    MetricInfo:
+      allOf:
+        - $ref: "#/components/schemas/MetricKind"
+        - type: object
+          required: [name, services, series, points, last_ts]
+          properties:
+            name: { type: string }
+            services: { type: array, items: { type: string } }
+            series: { type: integer }
+            points: { type: integer }
+            last_ts: { type: string, format: date-time }
+    MetricsList:
+      type: object
+      required: [items, range, truncated]
+      properties:
+        items: { type: array, items: { $ref: "#/components/schemas/MetricInfo" } }
+        range: { $ref: "#/components/schemas/Range" }
+        truncated: { type: boolean }
+    MetricAttributes:
+      type: object
+      required: [name, items, range]
+      properties:
+        name: { type: string }
+        items:
+          type: array
+          items:
+            type: object
+            required: [key, distinct, values]
+            properties:
+              key: { type: string }
+              distinct: { type: integer }
+              values: { type: array, items: { type: string } }
+        range: { $ref: "#/components/schemas/Range" }
+    MetricResult:
+      allOf:
+        - $ref: "#/components/schemas/MetricKind"
+        - type: object
+          required: [name, aggregate, step_seconds, range, timestamps, series, truncated]
+          properties:
+            name: { type: string }
+            aggregate: { type: string }
+            group_by: { type: string }
+            step_seconds: { type: integer }
+            range: { $ref: "#/components/schemas/Range" }
+            timestamps:
+              type: array
+              description: Every step start in the range.
+              items: { type: string, format: date-time }
+            series:
+              type: array
+              items:
+                type: object
+                required: [group, values]
+                properties:
+                  group:
+                    type: object
+                    description: The group_by key and this series' value; empty without group_by.
+                    additionalProperties: { type: string }
+                  values:
+                    type: array
+                    description: One value per timestamp, null where the step has no data.
+                    items: { type: [number, "null"] }
+                  incompatible_series:
+                    type: integer
+                    description: For histogram quantiles, series whose bucket bounds differ from the merged ones and are left out.
+            truncated: { type: boolean }
     Health:
       type: object
       required: [status, version, ready]
@@ -679,6 +908,7 @@ components:
             rejected_rows: { type: integer }
             unknown_service_records: { type: integer }
             duplicate_spans: { type: integer, description: Spans dropped because the same span was already stored in the hot window. }
+            duplicate_points: { type: integer, description: Metric points dropped because the same point was already stored in the hot window. }
             overloaded_requests: { type: integer }
             commits: { type: integer }
             failed_commits: { type: integer }

@@ -64,6 +64,12 @@ func newFakeAPI(t *testing.T) (*fakeAPI, *httptest.Server) {
 			_, _ = w.Write([]byte(spansJSON))
 		case "GET /api/v1/traces/" + traceID:
 			_, _ = w.Write([]byte(traceJSON))
+		case "GET /api/v1/metrics":
+			_, _ = w.Write([]byte(metricsJSON))
+		case "GET /api/v1/metrics/attributes":
+			_, _ = w.Write([]byte(attributesJSON))
+		case "GET /api/v1/metrics/query":
+			_, _ = w.Write([]byte(metricQueryJSON))
 		case "GET /api/v1/traces/" + cycleTraceID:
 			_, _ = w.Write([]byte(cycleTraceJSON))
 		default:

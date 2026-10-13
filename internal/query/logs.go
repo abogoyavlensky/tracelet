@@ -169,36 +169,40 @@ func scanLog(rows *sql.Rows) (Log, time.Time, error) {
 	return l, ingestTS, nil
 }
 
-// ServiceCount is one service's log and span counts in a range.
+// ServiceCount is one service's log, span, and metric point counts in a
+// range.
 type ServiceCount struct {
 	Service string `json:"service"`
 	Logs    int64  `json:"logs"`
 	Spans   int64  `json:"spans"`
+	Points  int64  `json:"points"`
 }
 
-const servicesSQL = `SELECT service, sum(logs) AS logs, sum(spans) AS spans FROM (
-  SELECT service, count(*) AS logs, 0 AS spans FROM %s WHERE project = ? GROUP BY service
+const servicesSQL = `SELECT service, sum(logs) AS logs, sum(spans) AS spans, sum(points) AS points FROM (
+  SELECT service, count(*) AS logs, 0 AS spans, 0 AS points FROM %s WHERE project = ? GROUP BY service
   UNION ALL
-  SELECT service, 0, count(*) FROM %s WHERE project = ? GROUP BY service
-) GROUP BY service ORDER BY sum(logs) + sum(spans) DESC, service`
+  SELECT service, 0, count(*), 0 FROM %s WHERE project = ? GROUP BY service
+  UNION ALL
+  SELECT service, 0, 0, count(*) FROM %s WHERE project = ? GROUP BY service
+) GROUP BY service ORDER BY sum(logs) + sum(spans) + sum(points) DESC, service`
 
-// Services returns the distinct services with logs or spans in a project and
-// range, busiest first by the two counts together.
+// Services returns the distinct services with logs, spans, or metric points
+// in a project and range, busiest first by the three counts together.
 func Services(ctx context.Context, snap *Snapshot, projectID string, rng Range) ([]ServiceCount, error) {
 	if !rng.From.Before(rng.To) {
 		return nil, invalid("from must be before to")
 	}
-	logs, logArgs, err := snap.Source(ctx, "logs", rng.From, rng.To)
-	if err != nil {
-		return nil, err
+	var srcs []any
+	var args []any
+	for _, signal := range []string{"logs", "spans", "metric_points"} {
+		src, a, err := snap.Source(ctx, signal, rng.From, rng.To)
+		if err != nil {
+			return nil, err
+		}
+		srcs = append(srcs, src)
+		args = append(append(args, a...), projectID)
 	}
-	spans, spanArgs, err := snap.Source(ctx, "spans", rng.From, rng.To)
-	if err != nil {
-		return nil, err
-	}
-	args := append(append(logArgs, projectID), spanArgs...)
-	args = append(args, projectID)
-	rows, err := snap.QueryContext(ctx, fmt.Sprintf(servicesSQL, logs, spans), args...)
+	rows, err := snap.QueryContext(ctx, fmt.Sprintf(servicesSQL, srcs...), args...)
 	if err != nil {
 		return nil, fmt.Errorf("services: %w", err)
 	}
@@ -207,7 +211,7 @@ func Services(ctx context.Context, snap *Snapshot, projectID string, rng Range) 
 	out := []ServiceCount{}
 	for rows.Next() {
 		var c ServiceCount
-		if err := rows.Scan(&c.Service, &c.Logs, &c.Spans); err != nil {
+		if err := rows.Scan(&c.Service, &c.Logs, &c.Spans, &c.Points); err != nil {
 			return nil, fmt.Errorf("scan service: %w", err)
 		}
 		out = append(out, c)

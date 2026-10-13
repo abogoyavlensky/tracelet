@@ -34,7 +34,11 @@ Commands:
   spans search [filters]                Search spans; --root lists traces
   traces get <trace-id>                 Show a trace as a tree (last 7 days
                                         unless --from/--to/--last widen it)
-  services [--project P] [--last D]     List services with log and span counts
+  metrics list [filters]                List metrics with their type, unit, and series
+  metrics attributes <name>             List a metric's attribute keys and values
+  metrics query <name> [--aggregate A] [--group-by K] [--step S]
+                                        Show a metric over time, per group
+  services [--project P] [--last D]     List services with log, span, and point counts
 
 Every client command takes --url (default $TRACELET_URL or
 http://localhost:8080), --token (default $TRACELET_TOKEN), and --json.
@@ -76,6 +80,8 @@ func Run(args []string, stdout, stderr io.Writer) int {
 		err = runSpans(ctx, rest, stdout, stderr)
 	case "traces":
 		err = runTraces(ctx, rest, stdout, stderr)
+	case "metrics":
+		err = runMetrics(ctx, rest, stdout, stderr)
 	case "services":
 		err = runServices(ctx, rest, stdout, stderr)
 	default:

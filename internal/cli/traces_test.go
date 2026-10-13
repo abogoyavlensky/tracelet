@@ -13,7 +13,7 @@ const (
 	traceID      = "4bf92f3577b34da6a3ce929d0e0e4736"
 	cycleTraceID = "0af7651916cd43dd8448eb211c80319c"
 
-	servicesJSON = `{"items":[{"service":"api","logs":125,"spans":2},{"service":"worker","logs":126,"spans":1}],` +
+	servicesJSON = `{"items":[{"service":"api","logs":125,"spans":2,"points":40},{"service":"worker","logs":126,"spans":1,"points":0}],` +
 		`"range":{"from":"2026-10-10T11:00:00Z","to":"2026-10-10T12:00:00Z"}}`
 	// The grandchild is listed before its parent to check nesting does not
 	// depend on order.
@@ -128,6 +128,6 @@ func TestServices(t *testing.T) {
 	assert.Equal(t, url.Values{"last": {"24h"}}, f.last.URL.Query())
 	lines := strings.Split(strings.TrimRight(out, "\n"), "\n")
 	require.Len(t, lines, 2)
-	assert.Equal(t, []string{"api", "125", "logs", "2", "spans"}, strings.Fields(lines[0]))
-	assert.Equal(t, []string{"worker", "126", "logs", "1", "spans"}, strings.Fields(lines[1]))
+	assert.Equal(t, []string{"api", "125", "logs", "2", "spans", "40", "points"}, strings.Fields(lines[0]))
+	assert.Equal(t, []string{"worker", "126", "logs", "1", "spans", "0", "points"}, strings.Fields(lines[1]))
 }

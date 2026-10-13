@@ -82,6 +82,12 @@ export const icons = {
       <path d="M3 6h7M8 12h8M14 18h7" />
     </Icon>
   ),
+  metrics: (p: IconProps) => (
+    <Icon {...p}>
+      <path d="M4 4v16h16" />
+      <path d="m7 15 4-5 3 3 5-6" />
+    </Icon>
+  ),
   logs: (p: IconProps) => (
     <Icon {...p}>
       <path d="M5 6h14M5 12h14M5 18h9" />

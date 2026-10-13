@@ -146,9 +146,45 @@ export type Trace = {
   truncated: boolean
 }
 
-export type ServiceCount = { service: string; logs: number; spans: number }
+export type ServiceCount = { service: string; logs: number; spans: number; points: number }
 
 export type Services = { items: ServiceCount[]; range: Range }
+
+export type MetricType = 'gauge' | 'sum' | 'histogram'
+
+export type MetricKind = { type: MetricType; monotonic: boolean; unit?: string }
+
+export type MetricInfo = MetricKind & {
+  name: string
+  services: string[]
+  series: number
+  points: number
+  last_ts: string
+}
+
+export type MetricsList = { items: MetricInfo[]; range: Range; truncated: boolean }
+
+export type AttributeInfo = { key: string; distinct: number; values: string[] }
+
+export type MetricAttributes = { name: string; items: AttributeInfo[]; range: Range }
+
+export type MetricSeries = {
+  group: Record<string, string>
+  /** One value per timestamp; null where the step has no data. */
+  values: (number | null)[]
+  incompatible_series?: number
+}
+
+export type MetricResult = MetricKind & {
+  name: string
+  aggregate: string
+  group_by?: string
+  step_seconds: number
+  range: Range
+  timestamps: string[]
+  series: MetricSeries[]
+  truncated: boolean
+}
 
 export type Health = {
   status: 'ok' | 'degraded'
@@ -190,6 +226,31 @@ export type TraceParams = RangeParams & { project?: string }
 
 export type ServicesParams = RangeParams & { project?: string }
 
+export type MetricsParams = RangeParams & {
+  project?: string
+  service?: string
+  environment?: string
+  q?: string
+}
+
+export type MetricAttributesParams = RangeParams & {
+  project?: string
+  name: string
+  service?: string
+  environment?: string
+}
+
+export type MetricQueryParams = RangeParams & {
+  project?: string
+  name: string
+  aggregate?: string
+  group_by?: string
+  service?: string
+  environment?: string
+  attr?: string[]
+  step?: string
+}
+
 export function getHealth(): Promise<Health> {
   return fetchJSON<Health>('/api/v1/health')
 }
@@ -223,4 +284,16 @@ export function getTrace(traceId: string, params: TraceParams): Promise<Trace> {
 
 export function listServices(params: ServicesParams): Promise<Services> {
   return fetchJSON<Services>(`/api/v1/services${toQuery(params)}`)
+}
+
+export function listMetrics(params: MetricsParams): Promise<MetricsList> {
+  return fetchJSON<MetricsList>(`/api/v1/metrics${toQuery(params)}`)
+}
+
+export function getMetricAttributes(params: MetricAttributesParams): Promise<MetricAttributes> {
+  return fetchJSON<MetricAttributes>(`/api/v1/metrics/attributes${toQuery(params)}`)
+}
+
+export function queryMetric(params: MetricQueryParams): Promise<MetricResult> {
+  return fetchJSON<MetricResult>(`/api/v1/metrics/query${toQuery(params)}`)
 }

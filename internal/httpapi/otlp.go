@@ -48,6 +48,17 @@ func (h *Handler) otlpTraces(w http.ResponseWriter, r *http.Request) {
 	})
 }
 
+// otlpMetrics is OTLP/HTTP metrics ingestion.
+func (h *Handler) otlpMetrics(w http.ResponseWriter, r *http.Request) {
+	h.otlpIngest(w, r, "metrics", func(body []byte, projectID string) (otlp.Converted, error) {
+		req, err := otlp.DecodeMetrics(body)
+		if err != nil {
+			return otlp.Converted{}, err
+		}
+		return otlp.ConvertMetrics(req, projectID), nil
+	})
+}
+
 // otlpIngest is OTLP/HTTP ingestion of one signal: protobuf only, optionally
 // gzipped. convert decodes the body into rows of the project; a decode error
 // is a malformed request. The batch is committed before the response, so a

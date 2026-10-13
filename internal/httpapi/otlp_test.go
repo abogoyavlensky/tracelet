@@ -14,6 +14,7 @@ import (
 	"github.com/stretchr/testify/require"
 	commonpb "go.opentelemetry.io/proto/otlp/common/v1"
 	logspb "go.opentelemetry.io/proto/otlp/logs/v1"
+	metricspb "go.opentelemetry.io/proto/otlp/metrics/v1"
 	resourcepb "go.opentelemetry.io/proto/otlp/resource/v1"
 	tracepb "go.opentelemetry.io/proto/otlp/trace/v1"
 	"google.golang.org/protobuf/proto"
@@ -284,4 +285,98 @@ func TestOTLPTracesRejections(t *testing.T) {
 			assert.Empty(t, ing.batches)
 		})
 	}
+}
+
+func metricsBody(t *testing.T, points ...*metricspb.NumberDataPoint) []byte {
+	t.Helper()
+	b, err := proto.Marshal(&metricspb.MetricsData{ResourceMetrics: []*metricspb.ResourceMetrics{{
+		Resource: &resourcepb.Resource{Attributes: []*commonpb.KeyValue{{
+			Key: "service.name", Value: &commonpb.AnyValue{Value: &commonpb.AnyValue_StringValue{StringValue: "api"}},
+		}}},
+		ScopeMetrics: []*metricspb.ScopeMetrics{{Metrics: []*metricspb.Metric{{
+			Name: "queue.depth",
+			Data: &metricspb.Metric_Gauge{Gauge: &metricspb.Gauge{DataPoints: points}},
+		}}}},
+	}}})
+	require.NoError(t, err)
+	return b
+}
+
+func gaugePoint() *metricspb.NumberDataPoint {
+	return &metricspb.NumberDataPoint{
+		TimeUnixNano: uint64(time.Now().UnixNano()), Value: &metricspb.NumberDataPoint_AsInt{AsInt: 3},
+	}
+}
+
+func postMetrics(h http.Handler, token, contentType, encoding string, body []byte) *httptest.ResponseRecorder {
+	return postOTLP(h, "/v1/metrics", token, contentType, encoding, body)
+}
+
+func TestOTLPMetricsAccepted(t *testing.T) {
+	ing := &fakeIngester{}
+	rec := postMetrics(newOTLPHandler(t, ing, false), ingestToken, "application/x-protobuf", "", metricsBody(t, gaugePoint()))
+	require.Equal(t, http.StatusOK, rec.Code, rec.Body.String())
+	assert.Equal(t, "application/x-protobuf", rec.Header().Get("Content-Type"))
+	assert.Empty(t, rec.Body.Bytes())
+
+	require.Len(t, ing.batches, 1)
+	require.Len(t, ing.batches[0].Points, 1)
+	assert.Equal(t, "p1", ing.batches[0].Points[0].Project)
+	assert.Equal(t, "queue.depth", ing.batches[0].Points[0].Name)
+}
+
+func TestOTLPMetricsGzip(t *testing.T) {
+	ing := &fakeIngester{}
+	rec := postMetrics(newOTLPHandler(t, ing, false), ingestToken, "application/x-protobuf", "gzip", gzipped(t, metricsBody(t, gaugePoint())))
+	require.Equal(t, http.StatusOK, rec.Code, rec.Body.String())
+	require.Len(t, ing.batches, 1)
+	assert.Len(t, ing.batches[0].Points, 1)
+}
+
+func TestOTLPMetricsPartialSuccess(t *testing.T) {
+	ing := &fakeIngester{}
+	noTime := gaugePoint()
+	noTime.TimeUnixNano = 0
+	rec := postMetrics(newOTLPHandler(t, ing, false), ingestToken, "application/x-protobuf", "", metricsBody(t, gaugePoint(), noTime))
+	require.Equal(t, http.StatusOK, rec.Code)
+
+	rejected, msg, err := otlp.ParsePartialSuccess(rec.Body.Bytes())
+	require.NoError(t, err)
+	assert.Equal(t, int64(1), rejected)
+	assert.Equal(t, "data point has no time_unix_nano", msg)
+	assert.Equal(t, int64(1), ing.rejected)
+	require.Len(t, ing.batches, 1)
+	assert.Len(t, ing.batches[0].Points, 1)
+}
+
+func TestOTLPMetricsRejections(t *testing.T) {
+	tests := []struct {
+		name        string
+		token       string
+		contentType string
+		body        []byte
+		want        int
+		contains    string
+	}{
+		{"read token", readToken, "application/x-protobuf", []byte{}, http.StatusForbidden, "ingest"},
+		{"json", ingestToken, "application/json", []byte("{}"), http.StatusUnsupportedMediaType, "protobuf"},
+		{"malformed", ingestToken, "application/x-protobuf", []byte{0xff, 0xff, 0xff}, http.StatusBadRequest, "malformed OTLP metrics request"},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			ing := &fakeIngester{}
+			rec := postMetrics(newOTLPHandler(t, ing, false), tt.token, tt.contentType, "", tt.body)
+			assert.Equal(t, tt.want, rec.Code, rec.Body.String())
+			assert.Contains(t, rec.Body.String(), tt.contains)
+			assert.Empty(t, ing.batches)
+		})
+	}
+}
+
+func TestOTLPMetricsDiskPressure(t *testing.T) {
+	ing := &fakeIngester{}
+	rec := postMetrics(newOTLPHandler(t, ing, true), ingestToken, "application/x-protobuf", "", metricsBody(t, gaugePoint()))
+	assert.Equal(t, http.StatusServiceUnavailable, rec.Code)
+	assert.NotEmpty(t, rec.Header().Get("Retry-After"))
+	assert.Empty(t, ing.batches)
 }

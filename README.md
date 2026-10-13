@@ -6,9 +6,9 @@ Self-hosted logs, traces, metrics, errors, and alerts for personal projects in o
 executable with one data directory. See [docs/VISION.md](docs/VISION.md) for the
 direction and [docs/DESIGN.md](docs/DESIGN.md) for the technical design.
 
-Status: early. Tracelet ingests **logs and traces** so far, over OTLP/HTTP with
-protobuf encoding, and searches them through a web UI, the HTTP API, and the
-CLI. Metrics and everything else in the vision come later.
+Status: early. Tracelet ingests **logs, traces, and metrics** so far, over
+OTLP/HTTP with protobuf encoding, and explores them through a web UI, the HTTP
+API, and the CLI. Errors, alerts, and everything else in the vision come later.
 
 ## Install
 
@@ -50,8 +50,8 @@ tracelet tokens create --project shop --scope ingest --name "api server"
 # prints tl_... once: the ingest token
 ```
 
-Point any OpenTelemetry SDK at Tracelet. The SDK appends `/v1/logs` and
-`/v1/traces` itself:
+Point any OpenTelemetry SDK at Tracelet. The SDK appends `/v1/logs`,
+`/v1/traces`, and `/v1/metrics` itself:
 
 ```sh
 OTEL_EXPORTER_OTLP_ENDPOINT=http://localhost:8080
@@ -69,7 +69,15 @@ An SDK retries a whole request when it loses a response, so a span that is
 already stored is dropped and counted as `duplicate_spans` on health. That
 check covers the current and previous hour, which are still in DuckDB; a retry
 arriving after its hour was flushed to Parquet is stored twice. Logs are not
-deduplicated. Span `trace_state` and `flags` are not stored.
+deduplicated. Span `trace_state` and `flags` are not stored. Metric points are
+deduplicated the same way and counted as `duplicate_points`.
+
+Metrics may use cumulative or delta temporality; both give the same rates.
+Counter resets are detected per series, and every SDK process is its own series,
+so replicas never mix and the first export after a restart is counted.
+Gauges, sums, and explicit-bucket histograms are stored; exponential
+histograms, summaries, and delta up-down counters are rejected with a reason in
+the export response. Exemplars are not stored.
 
 Open the server in a browser (`http://localhost:8080`) and sign in with a
 token. Create one for each browser, so a lost device can be revoked without
@@ -82,15 +90,16 @@ tracelet tokens create --scope read --name laptop
 
 The browser keeps the token in an `HttpOnly` cookie. The admin token works too,
 but it is better kept for the CLI. The UI has a logs explorer, a traces list,
-and a trace page with the waterfall, span details, and the trace's logs; every
-view's filters and time range live in its URL.
+a trace page with the waterfall, span details, and the trace's logs, and a
+metrics catalog with a chart per metric; every view's filters and time range
+live in its URL.
 
 Search logs from the CLI:
 
 ```sh
 tracelet logs search --project shop --service api --level error --last 30m
 tracelet logs search --project shop --attr exception.type:Timeout --json
-tracelet services --project shop --last 24h    # log and span counts per service
+tracelet services --project shop --last 24h    # log, span, and point counts per service
 ```
 
 Find traces and follow one into its logs:
@@ -103,6 +112,21 @@ tracelet traces get 4bf92f3577b34da6a3ce929d0e0e4736 --project shop
 tracelet logs search --project shop --trace-id 4bf92f3577b34da6a3ce929d0e0e4736 \
   --from 2026-10-11T09:14:02Z --to 2026-10-11T09:14:04Z
 ```
+
+Find metrics and chart them in the terminal:
+
+```sh
+tracelet metrics list --project shop --last 1h
+tracelet metrics attributes http.server.request.duration --project shop
+# p95 latency per route; counters default to a per-second rate
+tracelet metrics query http.server.request.duration --project shop --aggregate p95 --group-by http.route --last 6h
+tracelet metrics query orders.created --project shop --aggregate increase --step 1h --last 24h
+```
+
+A query returns one value per step and group: counters take `rate` or
+`increase`, gauges and up-down counters `avg`, `min`, `max`, or `sum`, and
+histograms `p50`-style quantiles, `rate`, or `avg`. Empty steps stay empty
+rather than reading zero, and the last step can read low until it completes.
 
 `traces get` prints the spans as a tree and looks back 7 days unless
 `--from`/`--to` or `--last` say otherwise; its `--json` output carries `start`
@@ -153,12 +177,12 @@ Releases, the Docker image, and the master deploy are described in
 | `internal/httpapi` | HTTP handlers: OTLP at `/v1/`, the API at `/api/v1/` |
 | `internal/cli` | The CLI, a client of the HTTP API |
 | `internal/project` | Projects and scoped tokens |
-| `internal/otlp` | OTLP logs and traces decoding into telemetry rows |
+| `internal/otlp` | OTLP logs, traces, and metrics decoding into telemetry rows |
 | `internal/ingest` | Bounded queue and the single batching writer loop |
 | `internal/duckdb` | Hot DuckDB tables and the writer |
 | `internal/flush` | Hourly flush to Parquet, reconcile, retention |
 | `internal/manifest` | The Parquet file manifest |
-| `internal/query` | Consistent snapshots, logs and span search, trace lookup, services |
+| `internal/query` | Consistent snapshots, logs and span search, trace lookup, metric queries, services |
 | `internal/sqlite` | `tracelet.sqlite`: migrations, project and token store |
 | `internal/telemetry` | Row types for the three signals |
 | `internal/web` | Serves the embedded frontend build |

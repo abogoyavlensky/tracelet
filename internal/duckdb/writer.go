@@ -6,6 +6,7 @@ import (
 	"database/sql/driver"
 	"errors"
 	"fmt"
+	"strconv"
 	"strings"
 	"time"
 
@@ -16,9 +17,10 @@ import (
 
 // CommitStats describes one Write.
 type CommitStats struct {
-	Rows       int           // rows appended
-	Duplicates int           // spans dropped as already stored or repeated
-	Latency    time.Duration // first append to commit
+	Rows            int           // rows appended
+	DuplicateSpans  int           // spans dropped as already stored or repeated
+	DuplicatePoints int           // metric points dropped as already stored or repeated
+	Latency         time.Duration // first append to commit
 }
 
 // Writer appends batches to the hot tables over one dedicated connection. It
@@ -92,7 +94,10 @@ func NewWriter(ctx context.Context, s *Store, floor time.Time) (*Writer, error) 
 // A span whose (project, trace_id, span_id) is already in the hot spans
 // table, or earlier in the batch, is dropped and counted as a duplicate: an
 // SDK retries a whole request when a response is lost after the commit. A
-// retry arriving after its hour was flushed is not caught.
+// metric point whose (series_hash, start_ts, ts) is already in the hot
+// metric_points table, or earlier in the batch, is dropped the same way; the
+// series hash includes the project. A retry arriving after its hour was
+// flushed is not caught.
 func (w *Writer) Write(ctx context.Context, batch telemetry.Batch) (CommitStats, error) {
 	if batch.Len() == 0 {
 		return CommitStats{}, nil
@@ -107,15 +112,18 @@ func (w *Writer) Write(ctx context.Context, batch telemetry.Batch) (CommitStats,
 	if _, err := w.conn.ExecContext(ctx, "BEGIN TRANSACTION"); err != nil {
 		return CommitStats{}, fmt.Errorf("begin: %w", err)
 	}
-	var existing map[spanKey]bool
+	seen := dedupKeys{spans: map[spanKey]bool{}, points: map[pointKey]bool{}}
 	var err error
 	if len(batch.Spans) > 0 {
-		existing, err = w.existingSpanKeys(ctx, batch.Spans)
+		seen.spans, err = w.existingSpanKeys(ctx, batch.Spans)
+	}
+	if err == nil && len(batch.Points) > 0 {
+		seen.points, err = w.existingPointKeys(ctx, batch.Points)
 	}
 	var next time.Time
-	var rows, dups int
+	var st CommitStats
 	if err == nil {
-		next, rows, dups, err = w.appendAll(batch, existing, stamp)
+		next, st, err = w.appendAll(batch, seen, stamp)
 	}
 	if err != nil {
 		// ROLLBACK does not touch the appenders' own buffers; without Clear the
@@ -130,7 +138,8 @@ func (w *Writer) Write(ctx context.Context, batch telemetry.Batch) (CommitStats,
 	}
 	w.last = next.Add(-time.Microsecond)
 
-	return CommitStats{Rows: rows, Duplicates: dups, Latency: time.Since(start)}, nil
+	st.Latency = time.Since(start)
+	return st, nil
 }
 
 // spanKey identifies a span. The project is part of it: one commit can hold
@@ -179,15 +188,76 @@ func (w *Writer) existingSpanKeys(ctx context.Context, spans []telemetry.Span) (
 	return out, nil
 }
 
-// appendAll appends every row but duplicate spans, stamping from stamp
-// upwards, and returns the stamp the next row would get, the rows appended,
-// and the spans skipped. existing is extended with the appended spans' keys.
-func (w *Writer) appendAll(batch telemetry.Batch, existing map[spanKey]bool, stamp time.Time) (time.Time, int, int, error) {
-	rows, dups := 0, 0
+// pointKey identifies a metric point. The series hash covers the project.
+type pointKey struct {
+	hash      uint64
+	start, ts time.Time
+}
+
+func newPointKey(hash uint64, start, ts time.Time) pointKey {
+	return pointKey{hash: hash, start: start.UTC(), ts: ts.UTC()}
+}
+
+// dedupKeys holds the keys of rows already stored or appended in this Write.
+type dedupKeys struct {
+	spans  map[spanKey]bool
+	points map[pointKey]bool
+}
+
+const existingPointsSQL = `SELECT series_hash, start_ts, ts FROM metric_points WHERE ts >= ? AND ts <= ? AND series_hash IN (`
+
+// existingPointKeys returns the keys of hot metric points that share a series
+// with points and lie within their time span, inside the open transaction as
+// existingSpanKeys does. A NULL start_ts is the zero time, as in MetricPoint.
+func (w *Writer) existingPointKeys(ctx context.Context, points []telemetry.MetricPoint) (map[pointKey]bool, error) {
+	lo, hi := points[0].TS, points[0].TS
+	hashes := map[uint64]bool{}
+	var args []any
+	for _, p := range points {
+		if p.TS.Before(lo) {
+			lo = p.TS
+		}
+		if p.TS.After(hi) {
+			hi = p.TS
+		}
+		if !hashes[p.SeriesHash] {
+			hashes[p.SeriesHash] = true
+			// database/sql refuses uint64 parameters with the high bit set,
+			// which most hashes have; DuckDB casts the decimal text back.
+			args = append(args, strconv.FormatUint(p.SeriesHash, 10))
+		}
+	}
+	q := existingPointsSQL + strings.Repeat("?::UBIGINT, ", len(args)-1) + "?::UBIGINT)"
+	rows, err := w.conn.QueryContext(ctx, q, append([]any{lo, hi}, args...)...)
+	if err != nil {
+		return nil, fmt.Errorf("find duplicate points: %w", err)
+	}
+	defer rows.Close()
+	out := map[pointKey]bool{}
+	for rows.Next() {
+		var hash uint64
+		var start sql.NullTime
+		var ts time.Time
+		if err := rows.Scan(&hash, &start, &ts); err != nil {
+			return nil, fmt.Errorf("find duplicate points: %w", err)
+		}
+		out[newPointKey(hash, start.Time, ts)] = true
+	}
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("find duplicate points: %w", err)
+	}
+	return out, nil
+}
+
+// appendAll appends every row but duplicate spans and points, stamping from
+// stamp upwards, and returns the stamp the next row would get and the counts.
+// seen is extended with the appended spans' and points' keys.
+func (w *Writer) appendAll(batch telemetry.Batch, seen dedupKeys, stamp time.Time) (time.Time, CommitStats, error) {
+	var st CommitStats
 	next := func() time.Time {
 		s := stamp
 		stamp = stamp.Add(time.Microsecond)
-		rows++
+		st.Rows++
 		return s
 	}
 	for _, l := range batch.Logs {
@@ -199,16 +269,16 @@ func (w *Writer) appendAll(batch telemetry.Batch, existing map[spanKey]bool, sta
 			nullString(l.Resource), nullString(l.Attributes),
 		)
 		if err != nil {
-			return time.Time{}, 0, 0, fmt.Errorf("append log: %w", err)
+			return time.Time{}, CommitStats{}, fmt.Errorf("append log: %w", err)
 		}
 	}
 	for _, s := range batch.Spans {
 		k := spanKey{s.Project, s.TraceID, s.SpanID}
-		if existing[k] {
-			dups++
+		if seen.spans[k] {
+			st.DuplicateSpans++
 			continue
 		}
-		existing[k] = true
+		seen.spans[k] = true
 		err := w.spans.AppendRow(
 			s.TS, s.EndTS, next(),
 			s.Project, s.Service, nullString(s.Environment), nullString(s.Version),
@@ -218,10 +288,16 @@ func (w *Writer) appendAll(batch telemetry.Batch, existing map[spanKey]bool, sta
 			nullString(s.Resource), nullString(s.Attributes), nullString(s.Events), nullString(s.Links),
 		)
 		if err != nil {
-			return time.Time{}, 0, 0, fmt.Errorf("append span: %w", err)
+			return time.Time{}, CommitStats{}, fmt.Errorf("append span: %w", err)
 		}
 	}
 	for _, p := range batch.Points {
+		k := newPointKey(p.SeriesHash, p.StartTS, p.TS)
+		if seen.points[k] {
+			st.DuplicatePoints++
+			continue
+		}
+		seen.points[k] = true
 		err := w.points.AppendRow(
 			p.TS, nullTime(p.StartTS), next(),
 			p.Project, p.Service, nullString(p.Environment), nullString(p.Version),
@@ -233,16 +309,16 @@ func (w *Writer) appendAll(batch telemetry.Batch, existing map[spanKey]bool, sta
 			nullSlice(p.BucketCounts), nullSlice(p.BucketBounds),
 		)
 		if err != nil {
-			return time.Time{}, 0, 0, fmt.Errorf("append metric point: %w", err)
+			return time.Time{}, CommitStats{}, fmt.Errorf("append metric point: %w", err)
 		}
 	}
 
 	for _, a := range []*duckdbgo.Appender{w.logs, w.spans, w.points} {
 		if err := a.Flush(); err != nil {
-			return time.Time{}, 0, 0, fmt.Errorf("flush appender: %w", err)
+			return time.Time{}, CommitStats{}, fmt.Errorf("flush appender: %w", err)
 		}
 	}
-	return stamp, rows, dups, nil
+	return stamp, st, nil
 }
 
 func (w *Writer) clear() {

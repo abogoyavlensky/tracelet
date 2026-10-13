@@ -34,6 +34,7 @@ func DecodeLogs(body []byte) (*logspb.LogsData, error) {
 type Converted struct {
 	Logs           []telemetry.Log
 	Spans          []telemetry.Span
+	Points         []telemetry.MetricPoint
 	Rejected       int64
 	RejectReason   string
 	UnknownService int64
@@ -41,7 +42,7 @@ type Converted struct {
 
 // Batch returns the rows to store.
 func (c Converted) Batch() telemetry.Batch {
-	return telemetry.Batch{Logs: c.Logs, Spans: c.Spans}
+	return telemetry.Batch{Logs: c.Logs, Spans: c.Spans, Points: c.Points}
 }
 
 // ConvertLogs turns a request into rows of the given project. A record with
@@ -135,16 +136,17 @@ func jsonObject(kvs []*commonpb.KeyValue) string {
 	return string(b)
 }
 
-// Response field numbers, identical in ExportLogsServiceResponse and
-// ExportTraceServiceResponse, so one encoder serves both.
+// Response field numbers, identical in ExportLogsServiceResponse,
+// ExportTraceServiceResponse, and ExportMetricsServiceResponse, so one
+// encoder serves all three.
 const (
-	fieldPartialSuccess = 1 // Export{Logs,Trace}ServiceResponse.partial_success
-	fieldRejected       = 1 // rejected_log_records, rejected_spans
-	fieldErrorMessage   = 2 // Export{Logs,Trace}PartialSuccess.error_message
+	fieldPartialSuccess = 1 // Export{Logs,Trace,Metrics}ServiceResponse.partial_success
+	fieldRejected       = 1 // rejected_log_records, rejected_spans, rejected_data_points
+	fieldErrorMessage   = 2 // Export{Logs,Trace,Metrics}PartialSuccess.error_message
 )
 
-// PartialSuccess encodes the ExportLogsServiceResponse or
-// ExportTraceServiceResponse for a converted request: empty when nothing was rejected, as OTLP asks, and otherwise a
+// PartialSuccess encodes the export response for a converted request of any
+// signal: empty when nothing was rejected, as OTLP asks, and otherwise a
 // partial_success naming the rejected count and the reason.
 func PartialSuccess(c Converted) []byte {
 	if c.Rejected == 0 {

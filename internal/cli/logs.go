@@ -168,6 +168,7 @@ func runServices(ctx context.Context, args []string, stdout, stderr io.Writer) e
 			Service string `json:"service"`
 			Logs    int64  `json:"logs"`
 			Spans   int64  `json:"spans"`
+			Points  int64  `json:"points"`
 		}
 	}
 	if err := json.Unmarshal(body, &list); err != nil {
@@ -175,7 +176,7 @@ func runServices(ctx context.Context, args []string, stdout, stderr io.Writer) e
 	}
 	tw := tabwriter.NewWriter(stdout, 0, 4, 2, ' ', 0)
 	for _, s := range list.Items {
-		fmt.Fprintf(tw, "%s\t%d logs\t%d spans\n", s.Service, s.Logs, s.Spans)
+		fmt.Fprintf(tw, "%s\t%d logs\t%d spans\t%d points\n", s.Service, s.Logs, s.Spans, s.Points)
 	}
 	return tw.Flush()
 }

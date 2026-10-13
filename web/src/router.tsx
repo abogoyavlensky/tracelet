@@ -12,6 +12,8 @@ import { ApiError } from './api'
 import { AppShell } from './components/AppShell'
 import { LoginPage } from './pages/LoginPage'
 import { LogsPage } from './pages/LogsPage'
+import { MetricPage } from './pages/MetricPage'
+import { MetricsPage } from './pages/MetricsPage'
 import { TracePage } from './pages/TracePage'
 import { TracesPage } from './pages/TracesPage'
 import {
@@ -20,6 +22,8 @@ import {
   safeNext,
   stringifySearch,
   validateLogsSearch,
+  validateMetricSearch,
+  validateMetricsSearch,
   validateTraceSearch,
   validateTracesSearch,
 } from './search'
@@ -109,9 +113,34 @@ export const traceRoute = createRoute({
   },
 })
 
+export const metricsRoute = createRoute({
+  getParentRoute: () => appRoute,
+  path: 'metrics',
+  validateSearch: validateMetricsSearch,
+  component: function MetricsRoute() {
+    return <MetricsPage search={metricsRoute.useSearch()} />
+  },
+})
+
+export const metricRoute = createRoute({
+  getParentRoute: () => appRoute,
+  path: 'metrics/$name',
+  params: {
+    parse: ({ name }) => {
+      if (!name) throw new Error('A metric name is required')
+      return { name }
+    },
+    stringify: ({ name }) => ({ name }),
+  },
+  validateSearch: validateMetricSearch,
+  component: function MetricRoute() {
+    return <MetricPage name={metricRoute.useParams().name} search={metricRoute.useSearch()} />
+  },
+})
+
 const routeTree = rootRoute.addChildren([
   loginRoute,
-  appRoute.addChildren([indexRoute, logsRoute, tracesRoute, traceRoute]),
+  appRoute.addChildren([indexRoute, logsRoute, tracesRoute, traceRoute, metricsRoute, metricRoute]),
 ])
 
 export function createAppRouter(queryClient: QueryClient) {
