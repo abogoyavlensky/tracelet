@@ -151,6 +151,8 @@ Trace search, span attributes, parent and child relationships, duration, status,
 
 Structured logs with severity, body, timestamps, resource context, attributes, and optional trace context. Time-bounded search, filtering, cursor pagination, record details, and a live view fed from a cursor.
 
+**Live tail (built).** Every logs page carries a `tail_cursor`, and `since=<tail_cursor>` returns only the matching logs the earlier response could not have shown. The cursor is an ingest-stamp watermark, not a timestamp: the single writer commits batches in stamp order, so the hot table's maximum stamp in a pinned snapshot, joined with the manifest's greatest cutoff read before the pin, bounds exactly what that snapshot saw. A `ts` cursor would skip a record that arrives late behind a newer one, since exporters batch and service clocks differ. The cursor also holds the previous range's end, so a stored record with a `ts` in the future is returned once the range reaches it. The only race left repeats a row, never skips one, so clients de-duplicate on `(ts, ingest_ts)`. A response with more new records than `limit` says `truncated`. The UI's Live toggle and `tracelet logs search --follow` poll every 2 seconds; the server-sent event described under freshness is still to come, and the same cursor serves it.
+
 Named application events such as `signup.completed` are structured logs with an event name attribute. This gives counts and breakdowns without a separate analytics subsystem.
 
 ### Errors
@@ -313,6 +315,8 @@ Phases 1 to 4 follow the vision. Each feature ships with API and CLI access. Sco
 | Metric query | One endpoint; aggregation by kind; aligned steps; null for empty steps; at most 20 groups | Correct counter, gauge, and histogram semantics behind one shape that charts and agents read alike |
 | UI sign-in | An existing admin or read token in an HttpOnly cookie; one token per browser | No users table or sessions table; revoking a token signs its browser out; amends the setup-URL bootstrap at the owner's request |
 | UI layout and theme | Top header, full-width lists, detail pane on selection; light default with a stored dark choice; semantic colour tokens | Chosen from four screenshotted variants; scanning wants full width, reading wants a pane beside the list |
+| Live tail cursor | Ingest-stamp watermark from the pinned hot table, plus the previous `to` | A `ts` cursor skips late records; stamps commit in order, so the hot maximum is a gap-free prefix |
+| Live tail transport | Polling first; SSE later | No server push yet; the cursor is the same either way |
 | Frontend routing | TanStack Router, code-based routes, plain query strings | Typed search params for URL-encoded investigation state, without a router plugin or codegen |
 
 ## References

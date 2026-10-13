@@ -310,9 +310,9 @@ Every existing command keeps the same one-minute bound per request. Tests call `
 
 ### Task 7: End-to-end check
 
-- [ ] **Step 1:** Run `rite web-build`, then `rite dev` in the background. Create a project and an ingest token with the CLI, following `docs/operations.md`'s local steps.
-- [ ] **Step 2:** Stream logs: `go run github.com/open-telemetry/opentelemetry-collector-contrib/cmd/telemetrygen@latest logs --otlp-http --otlp-insecure --otlp-endpoint localhost:8080 --otlp-header 'Authorization="Bearer tl_..."' --rate 20 --duration 5m --otlp-attributes 'deployment.environment="staging"'`. It must not be added to `go.mod`; check its `--help` if a flag name differs.
-- [ ] **Step 3: Live UI.** Sign in through the preview browser (`mcp__t3-code__preview_*`) and open `/logs?last=15m&live=1`. Check each of these:
+- [x] **Step 1:** Run `rite web-build`, then `rite dev` in the background. Create a project and an ingest token with the CLI, following `docs/operations.md`'s local steps.
+- [x] **Step 2:** Stream logs: `go run github.com/open-telemetry/opentelemetry-collector-contrib/cmd/telemetrygen@latest logs --otlp-http --otlp-insecure --otlp-endpoint localhost:8080 --otlp-header 'Authorization="Bearer tl_..."' --rate 20 --duration 5m --otlp-attributes 'deployment.environment="staging"'`. It must not be added to `go.mod`; check its `--help` if a flag name differs.
+- [x] **Step 3: Live UI.** Sign in through the preview browser (`mcp__t3-code__preview_*`) and open `/logs?last=15m&live=1`. Check each of these:
   - rows appear within about 3 s;
   - a selected record stays open while rows arrive, and the list neither jumps nor re-scrolls to it;
   - a list scrolled down does not jump;
@@ -322,22 +322,35 @@ Every existing command keeps the same one-minute bound per request. Tests call `
   - switching the tab away stops requests (watch the server log);
   - the environment filter `staging` matches the generated records, which proves the fallback end to end.
   Take screenshots in light and dark.
-- [ ] **Step 4: Live CLI.** Run `go run ./cmd/tracelet logs search --follow --last 5m` against the same server for about 20 s and confirm that new lines stream. Stop it with Ctrl-C and confirm it exits 0.
-- [ ] **Step 5:** Note poll latency from the server log, and anything surprising, in this plan under the task.
+- [x] **Step 4: Live CLI.** Run `go run ./cmd/tracelet logs search --follow --last 5m` against the same server for about 20 s and confirm that new lines stream. Stop it with Ctrl-C and confirm it exits 0.
+- [x] **Step 5:** Note poll latency from the server log, and anything surprising, in this plan under the task.
+
+> Deviation: the `mcp__t3-code__preview_*` tools had no host in this session, so the UI was driven with headless Chromium through `playwright-core`, installed in `/tmp` and not in the repo. Screenshots are in `.tmp/live-{light,dark,selected,skipped}.png`.
+>
+> Results (local server, `telemetrygen` at 20 logs/s, 5 minutes):
+> - Environment fallback: `environment=staging` matched all 100 first-page records, `environment=default` matched none.
+> - Rows appear within one poll (100 to 200 rows in 6 s at 20/s). A selected record stayed open and `scrollTop` stayed 0. A list scrolled to 1500 px kept its probe row at the same viewport offset (221 px) while 100 rows arrived above it, so browser scroll anchoring does the job and needs no code.
+> - The toggle is disabled with the title "Live needs a relative time range" on an absolute range.
+> - A hidden tab (visibility overridden) made 0 requests in 7 s and polled once within 1.2 s of becoming visible.
+> - `last=1m` with the generator stopped: 100 rows at 31 s and 56 s of age, 0 rows at 71 s.
+> - A 2 x 1000/s burst showed the skipped notice ("More records arrived at 11:54:54 than live could show; some were skipped..."), the list restarted from a fresh first page, and Dismiss cleared the notice.
+> - CLI `--follow --last 5m --json` for 20 s: 900 records, all unique, identical to a plain search over the same ingest span (no skips, no repeats). SIGINT exits 0.
+> - Server-side latency: a `since` poll about 7 ms, a first page about 11 ms, at about 8,000 stored logs. The server does not log requests, so these are `curl` timings.
+> - Surprise: when everything ages out of a live `last=1m` window, the list shows the "No logs match" empty state, not an empty live list. Acceptable; not changed.
 
 ### Task 8: Documentation and backlog
 
 **Files:**
 - Modify: `docs/DESIGN.md`, `README.md`, `docs/backlog/live-log-tail.md`, `docs/backlog/deprecated-environment-attribute.md`
 
-- [ ] **Step 1: DESIGN.**
+- [x] **Step 1: DESIGN.**
   - Under "Logs and application events", add a **Live tail (built)** paragraph: the tail cursor, polling every 2 s, and the SSE still to come.
   - Add decision log rows:
     - "Live tail cursor | Ingest-stamp watermark from the pinned hot table, plus the previous `to` | A `ts` cursor skips late records; stamps commit in order, so the hot maximum is a gap-free prefix".
     - "Live tail transport | Polling first; SSE later | No server push yet; the cursor is the same either way".
-- [ ] **Step 2: README.** Document `--follow` in the CLI section and the Live toggle where the explorer is described.
-- [ ] **Step 3: Backlog.** Set both entries to `**Status: done**`, each with a line saying it shipped on branch `live-tail` by this plan.
-- [ ] **Step 4: Commit.** `git commit -m "Document the live tail and the environment fallback"`
+- [x] **Step 2: README.** Document `--follow` in the CLI section and the Live toggle where the explorer is described.
+- [x] **Step 3: Backlog.** Set both entries to `**Status: done**`, each with a line saying it shipped on branch `live-tail` by this plan.
+- [x] **Step 4: Commit.** `git commit -m "Document the live tail and the environment fallback"`
 
 ### Task 9: Check and pull request
 

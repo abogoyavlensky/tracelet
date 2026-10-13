@@ -94,13 +94,17 @@ The browser keeps the token in an `HttpOnly` cookie. The admin token works too,
 but it is better kept for the CLI. The UI has a logs explorer, a traces list,
 a trace page with the waterfall, span details, and the trace's logs, and a
 metrics catalog with a chart per metric; every view's filters and time range
-live in its URL.
+live in its URL. The logs explorer has a Live toggle for a relative time range:
+it polls every 2 seconds and merges new records into the list without moving
+the selected record or the scroll position.
 
 Search logs from the CLI:
 
 ```sh
 tracelet logs search --project shop --service api --level error --last 30m
 tracelet logs search --project shop --attr exception.type:Timeout --json
+# print the newest page, then new logs as they arrive, until Ctrl-C (--json: one object per line)
+tracelet logs search --project shop --level warn --last 15m --follow
 tracelet services --project shop --last 24h    # log, span, and point counts per service
 ```
 
