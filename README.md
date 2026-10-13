@@ -63,7 +63,9 @@ OTEL_RESOURCE_ATTRIBUTES="deployment.environment.name=prod,service.version=1.4.0
 
 Tracelet files every record under three resource attributes: `service.name`
 (`unknown_service` when missing), `deployment.environment.name` (`default` when
-missing), and `service.version`. OTLP/JSON and gRPC are not supported yet.
+missing), and `service.version`. Records sent with the older
+`deployment.environment` key, which semantic conventions before v1.27 used, file
+under its value when `deployment.environment.name` is absent. OTLP/JSON and gRPC are not supported yet.
 
 An SDK retries a whole request when it loses a response, so a span that is
 already stored is dropped and counted as `duplicate_spans` on health. That
@@ -92,13 +94,17 @@ The browser keeps the token in an `HttpOnly` cookie. The admin token works too,
 but it is better kept for the CLI. The UI has a logs explorer, a traces list,
 a trace page with the waterfall, span details, and the trace's logs, and a
 metrics catalog with a chart per metric; every view's filters and time range
-live in its URL.
+live in its URL. The logs explorer has a Live toggle for a relative time range:
+it polls every 2 seconds and merges new records into the list without moving
+the selected record or the scroll position.
 
 Search logs from the CLI:
 
 ```sh
 tracelet logs search --project shop --service api --level error --last 30m
 tracelet logs search --project shop --attr exception.type:Timeout --json
+# print the newest page, then new logs as they arrive, until Ctrl-C (--json: one object per line)
+tracelet logs search --project shop --level warn --last 15m --follow
 tracelet services --project shop --last 24h    # log, span, and point counts per service
 ```
 

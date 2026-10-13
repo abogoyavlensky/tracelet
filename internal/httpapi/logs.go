@@ -41,6 +41,7 @@ func (h *Handler) searchLogs(w http.ResponseWriter, r *http.Request) {
 		Range:       sp.rng,
 		Limit:       sp.limit,
 		Cursor:      sp.cursor,
+		Since:       q.Get("since"),
 	}
 	if level := q.Get("level"); level != "" {
 		n, err := query.ParseLevel(level)

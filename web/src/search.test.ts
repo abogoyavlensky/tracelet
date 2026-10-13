@@ -54,6 +54,15 @@ describe('validateLogsSearch', () => {
     ).toEqual({ project: 'shop', service: 'api', level: 'warn', q: 'boom', last: '1h' })
   })
 
+  it('reads live as a flag and never sends it to the API', () => {
+    expect(validateLogsSearch({ live: '1' }).live).toBe(true)
+    expect(validateLogsSearch({ live: 'true' }).live).toBe(true)
+    expect(validateLogsSearch({ live: '0' }).live).toBeUndefined()
+    expect(validateLogsSearch({ live: 'yes' }).live).toBeUndefined()
+    expect(validateLogsSearch({}).live).toBeUndefined()
+    expect(logsApiParams({ live: true, last: '15m' })).toEqual({ last: '15m' })
+  })
+
   it('normalises attr into a string array', () => {
     expect(validateLogsSearch({ attr: 'a:1' }).attr).toEqual(['a:1'])
     expect(validateLogsSearch({ attr: ['a:1', 'b:2'] }).attr).toEqual(['a:1', 'b:2'])

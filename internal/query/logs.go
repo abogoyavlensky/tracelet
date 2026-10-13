@@ -11,7 +11,8 @@ import (
 
 // LogsParams is one logs search. Exactly one of Range and Cursor positions
 // it: a cursor carries its first page's range so later pages read the same
-// window.
+// window. Since, a LogsPage.TailCursor, asks only for logs the page that
+// returned it could not have shown, and takes Range, not Cursor.
 type LogsParams struct {
 	ProjectID   string
 	Service     string
@@ -23,11 +24,13 @@ type LogsParams struct {
 	Range       Range
 	Limit       int // 0 is DefaultLimit
 	Cursor      string
+	Since       string
 }
 
 // Log is one search result. Resource and Attributes are JSON objects, or nil.
 type Log struct {
 	TS             time.Time       `json:"ts"`
+	IngestTS       time.Time       `json:"ingest_ts"`
 	ObservedTS     time.Time       `json:"observed_ts,omitzero"`
 	Service        string          `json:"service"`
 	Environment    string          `json:"environment,omitempty"`
@@ -49,6 +52,7 @@ type LogsPage struct {
 	Range      Range  `json:"range"`
 	Limit      int    `json:"limit"`
 	Truncated  bool   `json:"truncated"`
+	TailCursor string `json:"tail_cursor,omitempty"`
 }
 
 const logsSelect = `SELECT ts, observed_ts, ingest_ts, service, environment, version,
@@ -60,6 +64,13 @@ LIMIT ?`
 
 // LogsSearch returns one page of a project's logs matching p, newest first
 // by (ts, ingest_ts), which is unique per row.
+//
+// Every page carries a TailCursor, the position to follow new logs from.
+// With Since set, the search returns only logs stored after that position,
+// plus stored logs whose ts the previous range ended before. It has no
+// NextCursor: Truncated then means more than Limit new logs matched, the
+// oldest of which are left out. A log committed in the same few milliseconds
+// as a flush can come back once more on the next poll, but is never skipped.
 func LogsSearch(ctx context.Context, snap *Snapshot, p LogsParams) (LogsPage, error) {
 	limit := p.Limit
 	if limit == 0 {
@@ -70,6 +81,18 @@ func LogsSearch(ctx context.Context, snap *Snapshot, p LogsParams) (LogsPage, er
 	}
 	if p.ProjectID == "" {
 		return LogsPage{}, invalid("project is required")
+	}
+
+	if p.Since != "" && p.Cursor != "" {
+		return LogsPage{}, invalid("since cannot be combined with cursor")
+	}
+	var since tail
+	if p.Since != "" {
+		t, err := decodeTail(p.Since)
+		if err != nil {
+			return LogsPage{}, err
+		}
+		since = t
 	}
 
 	rng := p.Range
@@ -109,6 +132,10 @@ func LogsSearch(ctx context.Context, snap *Snapshot, p LogsParams) (LogsPage, er
 		f.add("(ts < ? OR (ts = ? AND ingest_ts < ?))", after.TS, after.TS, after.IngestTS)
 	}
 
+	if p.Since != "" {
+		f.add("(ingest_ts > ? OR ts >= ?)", since.IngestTS, since.To)
+	}
+
 	src, srcArgs, err := snap.Source(ctx, "logs", rng.From, rng.To)
 	if err != nil {
 		return LogsPage{}, err
@@ -125,7 +152,9 @@ func LogsSearch(ctx context.Context, snap *Snapshot, p LogsParams) (LogsPage, er
 	var last position
 	for rows.Next() {
 		if len(page.Items) == limit {
-			page.NextCursor = encodeCursor(position{TS: last.TS, IngestTS: last.IngestTS, From: rng.From, To: rng.To})
+			if p.Since == "" {
+				page.NextCursor = encodeCursor(position{TS: last.TS, IngestTS: last.IngestTS, From: rng.From, To: rng.To})
+			}
 			page.Truncated = true
 			break
 		}
@@ -139,6 +168,16 @@ func LogsSearch(ctx context.Context, snap *Snapshot, p LogsParams) (LogsPage, er
 	if err := rows.Err(); err != nil {
 		return LogsPage{}, fmt.Errorf("search logs: %w", err)
 	}
+	// The watermark comes from the same snapshot as the rows, and never goes
+	// backwards across polls.
+	w, err := snap.Watermark(ctx, "logs")
+	if err != nil {
+		return LogsPage{}, err
+	}
+	if since.IngestTS.After(w) {
+		w = since.IngestTS
+	}
+	page.TailCursor = encodeTail(tail{IngestTS: w, To: rng.To})
 	return page, nil
 }
 
@@ -154,6 +193,7 @@ func scanLog(rows *sql.Rows) (Log, time.Time, error) {
 		return Log{}, time.Time{}, fmt.Errorf("scan log: %w", err)
 	}
 	l.TS, ingestTS = l.TS.UTC(), ingestTS.UTC()
+	l.IngestTS = ingestTS
 	if observed.Valid {
 		l.ObservedTS = observed.Time.UTC()
 	}

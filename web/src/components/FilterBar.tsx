@@ -10,6 +10,7 @@ export function FilterBar({
   placeholder,
   active,
   summary,
+  actions,
   range,
   children,
 }: {
@@ -19,6 +20,8 @@ export function FilterBar({
   /** How many filters are set, shown on the phone's Filters button. */
   active: number
   summary: ReactNode
+  /** Buttons beside the summary, shown at every width. */
+  actions?: ReactNode
   /** The time range control, shown here on phones (the header has it on wider screens). */
   range: ReactNode
   children: ReactNode
@@ -47,7 +50,10 @@ export function FilterBar({
           {active > 0 ? active : 'Filters'}
         </button>
         <div className="md:hidden">{range}</div>
-        <span className="ml-auto hidden shrink-0 text-xs text-muted lg:block">{summary}</span>
+        <div className="ml-auto flex shrink-0 items-center gap-3">
+          {actions}
+          <span className="hidden text-xs text-muted lg:block">{summary}</span>
+        </div>
       </div>
     </div>
   )

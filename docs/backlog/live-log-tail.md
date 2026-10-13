@@ -1,6 +1,8 @@
 # The logs explorer has no live view
 
-**Status: open**
+**Status: done**
+
+Shipped on branch `live-tail` by `docs/plans/2026-10-13-1115-live-tail-and-environment-fallback.md`.
 
 ## Problem
 

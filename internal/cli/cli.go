@@ -8,7 +8,9 @@ import (
 	"io"
 	"net/http"
 	"os"
+	"os/signal"
 	"strings"
+	"syscall"
 	"time"
 )
 
@@ -30,7 +32,7 @@ Commands:
   tokens create --scope S --name N [--project P]
                                         Create a token; prints it once
   tokens revoke <id>                    Revoke a token
-  logs search [filters]                 Search logs
+  logs search [filters]                 Search logs; --follow streams new ones
   spans search [filters]                Search spans; --root lists traces
   traces get <trace-id>                 Show a trace as a tree (last 7 days
                                         unless --from/--to/--last widen it)
@@ -59,14 +61,24 @@ type usageError struct{ msg string }
 
 func (e usageError) Error() string { return e.msg }
 
-// Run runs one client command and returns its exit code.
+// Run runs one client command and returns its exit code. SIGINT and SIGTERM
+// cancel it; a second one then takes the default action and ends the
+// process, which matters when a write to a blocked pipe cannot be cancelled.
 func Run(args []string, stdout, stderr io.Writer) int {
+	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
+	defer stop()
+	context.AfterFunc(ctx, stop)
+	return RunContext(ctx, args, stdout, stderr)
+}
+
+// RunContext is Run under a caller's context. No command has an overall
+// deadline, since --follow runs until cancelled; each request is bounded by
+// the HTTP client's timeout instead.
+func RunContext(ctx context.Context, args []string, stdout, stderr io.Writer) int {
 	if len(args) == 0 {
 		fmt.Fprint(stderr, usage)
 		return exitUsage
 	}
-	ctx, cancel := context.WithTimeout(context.Background(), time.Minute)
-	defer cancel()
 
 	var err error
 	switch cmd, rest := args[0], args[1:]; cmd {

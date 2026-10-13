@@ -92,6 +92,8 @@ export type Page<T> = {
 
 export type Log = {
   ts: string
+  /** When the server stored the record; with ts it identifies the record. */
+  ingest_ts: string
   observed_ts?: string
   service: string
   environment?: string
@@ -106,7 +108,10 @@ export type Log = {
   attributes?: Attributes
 }
 
-export type LogsPage = Page<Log>
+export type LogsPage = Page<Log> & {
+  /** Pass as `since` to fetch only newer logs. */
+  tail_cursor?: string
+}
 
 export type SpanEvent = { ts?: string; name: string; attributes?: Attributes }
 
@@ -206,6 +211,7 @@ export type LogsParams = RangeParams & {
   attr?: string[]
   limit?: number
   cursor?: string
+  since?: string
 }
 
 export type SpansParams = RangeParams & {

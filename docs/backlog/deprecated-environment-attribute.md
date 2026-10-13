@@ -1,6 +1,8 @@
 # Records sent with the deprecated deployment.environment attribute file under "default"
 
-**Status: open**
+**Status: done**
+
+Shipped on branch `live-tail` by `docs/plans/2026-10-13-1115-live-tail-and-environment-fallback.md`.
 
 ## Problem
 
