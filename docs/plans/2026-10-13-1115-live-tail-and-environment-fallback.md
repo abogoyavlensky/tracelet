@@ -354,6 +354,19 @@ Every existing command keeps the same one-minute bound per request. Tests call `
 
 ### Task 9: Check and pull request
 
-- [ ] **Step 1:** Run `rite check`. Expected: every step passes.
+- [x] **Step 1:** Run `rite check`. Expected: every step passes.
 - [ ] **Step 2:** Push `live-tail` and open a PR. It summarises both changes, explains why the tail cursor is an ingest stamp, attaches the Task 7 screenshots, and lists the new `since` parameter and `tail_cursor` field as API additions. Link the PR to the thread with `mcp__t3-code__link_pull_request`.
 - [ ] **Step 3:** Wait for `ci` to pass on both architectures. Do not merge; the owner merges, which deploys.
+
+## Completion summary
+
+**Implemented.** The `deployment.environment` fallback (logs, spans, and metrics share `resourceInfo`). `Snapshot.Watermark`, the tail cursor, and `since` in the logs search; `since` and `tail_cursor` over HTTP and in OpenAPI; `tracelet logs search --follow` with `RunContext`; the live-tail reducer, merge, and hook with the Live toggle on the logs page; README, DESIGN, and both backlog entries. `rite check` passes, and the end-to-end run (Task 7) found no defects. Codex reviewed each task; the one must-fix was the signal-handling fixup in Task 4. The other reviews found nothing.
+
+**Deviations** (also noted under their tasks):
+- Task 4: `Run` also calls `context.AfterFunc(ctx, stop)`, so a second SIGINT ends a process stuck on a blocked stdout write (codex finding).
+- Task 5: `logKey` lives in `web/src/live.ts`, not `LogList.tsx`. `LiveState` carries a `resetting` flag instead of the reducer returning a side-channel result.
+- Task 6: `LogsPage` merges when the hook's `from` is set, not keyed on `live`, because the React Compiler lint rejected the manual memo.
+- Task 7: headless Chromium via `playwright-core` in `/tmp` replaced the unavailable preview tools; `web/node_modules` was stale and needed `npm ci`.
+- Tests for Tasks 1, 5 were written together with the implementation; the Task 1 test was confirmed red by reverting the fix, and the Task 2 watermark test by mutating `Watermark` to read the manifest after the pin.
+
+**What the plan could have specified better:** the reducer contract ("its result tells the hook whether to reset") does not fit `useReducer`, which only returns state, so the plan should have named the state flag; and Task 7 should have said what to do when the preview tools have no host (a headless browser from the shell) and that `npm ci` may be needed first.
