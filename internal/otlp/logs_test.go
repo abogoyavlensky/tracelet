@@ -106,6 +106,34 @@ func TestConvertUnknownService(t *testing.T) {
 	assert.Empty(t, c.Logs[0].Body)
 }
 
+func TestConvertEnvironment(t *testing.T) {
+	tests := []struct {
+		name  string
+		attrs []*commonpb.KeyValue
+		want  string
+	}{
+		{"deprecated key only", []*commonpb.KeyValue{kv("deployment.environment", str("staging"))}, "staging"},
+		{"both keys, new wins", []*commonpb.KeyValue{
+			kv("deployment.environment.name", str("prod")),
+			kv("deployment.environment", str("staging")),
+		}, "prod"},
+		{"neither", nil, otlp.DefaultEnvironment},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			c := otlp.ConvertLogs(request(tt.attrs, &logspb.LogRecord{TimeUnixNano: uint64(t0.UnixNano())}), "p1")
+			require.Len(t, c.Logs, 1)
+			assert.Equal(t, tt.want, c.Logs[0].Environment)
+		})
+	}
+
+	c := otlp.ConvertLogs(request(
+		[]*commonpb.KeyValue{kv("deployment.environment", str("staging"))},
+		&logspb.LogRecord{TimeUnixNano: uint64(t0.UnixNano())},
+	), "p1")
+	assert.JSONEq(t, `{"deployment.environment":"staging"}`, c.Logs[0].Resource, "the resource keeps what was sent")
+}
+
 func TestConvertAnyValues(t *testing.T) {
 	nested := &commonpb.AnyValue{Value: &commonpb.AnyValue_KvlistValue{KvlistValue: &commonpb.KeyValueList{
 		Values: []*commonpb.KeyValue{

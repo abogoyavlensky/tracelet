@@ -6,8 +6,8 @@ import commonpb "go.opentelemetry.io/proto/otlp/common/v1"
 // service.name, as the OpenTelemetry SDKs default it.
 const UnknownService = "unknown_service"
 
-// DefaultEnvironment is the environment of records whose resource has no
-// deployment.environment.name.
+// DefaultEnvironment is the environment of records whose resource has neither
+// deployment.environment.name nor the pre-1.27 deployment.environment.
 const DefaultEnvironment = "default"
 
 // Resource attributes Tracelet files rows under.
@@ -15,11 +15,16 @@ const (
 	attrServiceName    = "service.name"
 	attrServiceVersion = "service.version"
 	attrEnvironment    = "deployment.environment.name"
+
+	// attrEnvironmentDeprecated is the key semantic conventions before v1.27
+	// used; older SDKs still send it.
+	attrEnvironmentDeprecated = "deployment.environment"
 )
 
 // resourceInfo reads what every row takes from its resource: the service
 // (UnknownService when absent, with unknown set), the environment
-// (DefaultEnvironment when absent), the version, and the resource attributes
+// (the deprecated key's value when the new key is absent, else
+// DefaultEnvironment), the version, and the resource attributes
 // as JSON.
 func resourceInfo(attrs []*commonpb.KeyValue) (service, environment, version, resourceJSON string, unknown bool) {
 	service = stringAttr(attrs, attrServiceName)
@@ -28,6 +33,9 @@ func resourceInfo(attrs []*commonpb.KeyValue) (service, environment, version, re
 		service = UnknownService
 	}
 	environment = stringAttr(attrs, attrEnvironment)
+	if environment == "" {
+		environment = stringAttr(attrs, attrEnvironmentDeprecated)
+	}
 	if environment == "" {
 		environment = DefaultEnvironment
 	}

@@ -28,7 +28,7 @@ A project is the tenant boundary. Every OTLP request is attributed to exactly on
 | Filter | Resource attribute | Notes |
 | --- | --- | --- |
 | Service | `service.name` | Required. The SDK default `unknown_service` is accepted and flagged on the health page |
-| Environment | `deployment.environment.name` | Optional, defaults to `default` |
+| Environment | `deployment.environment.name` | Optional, defaults to `default`; falls back to the pre-1.27 `deployment.environment` |
 | Release | `service.version` | Optional. Drives deployment markers |
 
 Credentials have three scopes:

@@ -63,7 +63,9 @@ OTEL_RESOURCE_ATTRIBUTES="deployment.environment.name=prod,service.version=1.4.0
 
 Tracelet files every record under three resource attributes: `service.name`
 (`unknown_service` when missing), `deployment.environment.name` (`default` when
-missing), and `service.version`. OTLP/JSON and gRPC are not supported yet.
+missing), and `service.version`. Records sent with the older
+`deployment.environment` key, which semantic conventions before v1.27 used, file
+under its value when `deployment.environment.name` is absent. OTLP/JSON and gRPC are not supported yet.
 
 An SDK retries a whole request when it loses a response, so a span that is
 already stored is dropped and counted as `duplicate_spans` on health. That
