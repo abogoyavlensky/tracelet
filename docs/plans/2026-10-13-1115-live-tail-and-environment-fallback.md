@@ -217,15 +217,15 @@ Every existing command keeps the same one-minute bound per request. Tests call `
 - Modify: `internal/httpapi/logs.go`, `api/openapi.yaml`
 - Test: `internal/httpapi/logs_test.go`
 
-- [ ] **Step 1: Write the failing tests.**
+- [x] **Step 1: Write the failing tests.**
   - `TestLogsEndpointTail`: the first response has `tail_cursor`; after more rows are written, `?since=<it>&last=...` returns only them.
   - `cursor` plus `since` is 400.
   - A bad `since` is 400.
-- [ ] **Step 2:** Run `go test ./internal/httpapi/ -run Logs`. Expected: FAIL.
-- [ ] **Step 3: Implement.** Pass `q.Get("since")` into `LogsParams.Since`. `parseSearch` already rejects range parameters only with `cursor`, so `since` with a range needs no change there. Add `tail_cursor` to `pageBody` in the test.
-- [ ] **Step 4: OpenAPI.** Add `- { name: since, in: query, description: A tail_cursor from an earlier response; returns only logs that response could not have shown. Not with cursor., schema: { type: string } }`. Add `tail_cursor: { type: string, description: Pass as since to fetch only newer logs. }` to `LogsPage`, and `ingest_ts: { type: string, format: date-time, description: When the server stored the record; with ts it identifies the record. }` to `Log`. Extend the operation description with one paragraph on live tailing: `since` responses have no `next_cursor`, and `truncated` means records were left out.
-- [ ] **Step 5:** Run `go test ./internal/httpapi/`. Expected: PASS, including the OpenAPI coverage test.
-- [ ] **Step 6: Commit.** `git commit -m "Serve the logs tail cursor over the API"`
+- [x] **Step 2:** Run `go test ./internal/httpapi/ -run Logs`. Expected: FAIL.
+- [x] **Step 3: Implement.** Pass `q.Get("since")` into `LogsParams.Since`. `parseSearch` already rejects range parameters only with `cursor`, so `since` with a range needs no change there. Add `tail_cursor` to `pageBody` in the test.
+- [x] **Step 4: OpenAPI.** Add `- { name: since, in: query, description: A tail_cursor from an earlier response; returns only logs that response could not have shown. Not with cursor., schema: { type: string } }`. Add `tail_cursor: { type: string, description: Pass as since to fetch only newer logs. }` to `LogsPage`, and `ingest_ts: { type: string, format: date-time, description: When the server stored the record; with ts it identifies the record. }` to `Log`. Extend the operation description with one paragraph on live tailing: `since` responses have no `next_cursor`, and `truncated` means records were left out.
+- [x] **Step 5:** Run `go test ./internal/httpapi/`. Expected: PASS, including the OpenAPI coverage test.
+- [x] **Step 6: Commit.** `git commit -m "Serve the logs tail cursor over the API"`
 
 ### Task 4: `tracelet logs search --follow`
 

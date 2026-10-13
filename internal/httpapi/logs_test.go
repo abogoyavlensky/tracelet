@@ -28,6 +28,14 @@ var searchNow = time.Date(2026, 10, 10, 12, 0, 0, 0, time.UTC)
 // last hour, traceOld ten days ago, and one span of "other" in traceShop.
 func newSearchHandler(t *testing.T) http.Handler {
 	t.Helper()
+	h, _ := newSearchHandlerWriter(t)
+	return h
+}
+
+// newSearchHandlerWriter is newSearchHandler plus the writer behind it, for
+// tests that store more rows between requests.
+func newSearchHandlerWriter(t *testing.T) (http.Handler, *duckdb.Writer) {
+	t.Helper()
 	dir := t.TempDir()
 	store, err := duckdb.Open(dir, duckdb.Limits{MemoryLimit: "256MB", Threads: 1})
 	require.NoError(t, err)
@@ -65,7 +73,7 @@ func newSearchHandler(t *testing.T) http.Handler {
 		Auth: newFakeAuth(), Projects: projects, Logger: discardLogger(),
 		Queries: query.Opener{Store: store, Manifest: manifest.New(db), Gate: query.NewGate(4), DataDir: dir},
 		Now:     func() time.Time { return searchNow },
-	})
+	}), w
 }
 
 type pageBody struct {
@@ -78,6 +86,7 @@ type pageBody struct {
 	Range      query.Range `json:"range"`
 	Limit      int         `json:"limit"`
 	Truncated  bool        `json:"truncated"`
+	TailCursor string      `json:"tail_cursor"`
 }
 
 func (p pageBody) bodies() []string {
@@ -130,6 +139,29 @@ func TestLogsEndpointPaging(t *testing.T) {
 	assert.Equal(t, []string{"error three", "info two", "error one"}, got)
 }
 
+func TestLogsEndpointTail(t *testing.T) {
+	h, w := newSearchHandlerWriter(t)
+	code, first, body := getLogs(t, h, readToken, url.Values{})
+	require.Equal(t, http.StatusOK, code, body)
+	require.NotEmpty(t, first.TailCursor, "every first page carries a tail cursor")
+
+	_, err := w.Write(t.Context(), telemetry.Batch{Logs: []telemetry.Log{
+		{TS: searchNow.Add(-2 * time.Minute), Project: "p1", Service: "api", Body: "tail new"},
+		{TS: searchNow.Add(-30 * time.Minute), Project: "p1", Service: "api", Body: "tail late"},
+	}})
+	require.NoError(t, err)
+
+	code, tail, body := getLogs(t, h, readToken, url.Values{"since": {first.TailCursor}, "last": {"1h"}})
+	require.Equal(t, http.StatusOK, code, body)
+	assert.Equal(t, []string{"tail new", "tail late"}, tail.bodies())
+	assert.Empty(t, tail.NextCursor)
+	require.NotEmpty(t, tail.TailCursor)
+
+	code, again, body := getLogs(t, h, readToken, url.Values{"since": {tail.TailCursor}})
+	require.Equal(t, http.StatusOK, code, body)
+	assert.Empty(t, again.Items)
+}
+
 func TestLogsEndpointProjects(t *testing.T) {
 	h := newSearchHandler(t)
 
@@ -163,6 +195,8 @@ func TestLogsEndpointBadParameters(t *testing.T) {
 		"limit too big":    {"limit": {"1001"}},
 		"bad attr":         {"attr": {"noseparator"}},
 		"bad cursor":       {"cursor": {"!!"}},
+		"bad since":        {"since": {"!!"}},
+		"since and cursor": {"since": {"abc"}, "cursor": {"abc"}},
 		"from after to":    {"from": {"2026-10-10T11:00:00Z"}, "to": {"2026-10-10T10:00:00Z"}},
 	} {
 		code, _, body := getLogs(t, h, readToken, q)

@@ -350,6 +350,16 @@ paths:
         range, so later pages read the same window. A request with `cursor`
         must not send `from`, `to`, or `last`. Without any of them the range
         is the last hour.
+
+        Every page carries a `tail_cursor`. To follow new logs, repeat the
+        search with `since` set to the latest `tail_cursor`, and the same
+        filters: the response holds only logs the earlier one could not have
+        shown, newest first, and a new `tail_cursor`. `since` takes the
+        usual range parameters, so `last` slides forward with each poll, but
+        not `cursor`. A `since` response has no `next_cursor`; `truncated`
+        means more than `limit` new logs matched and the oldest were left out.
+        A log stored at the moment of a flush can come back once more on the
+        next poll, so deduplicate by `ts` and `ingest_ts`.
       operationId: searchLogs
       parameters:
         - $ref: "#/components/parameters/Project"
@@ -371,6 +381,7 @@ paths:
         - $ref: "#/components/parameters/Last"
         - { name: limit, in: query, schema: { type: integer, minimum: 1, maximum: 1000, default: 100 } }
         - { name: cursor, in: query, schema: { type: string } }
+        - { name: since, in: query, description: A tail_cursor from an earlier response; returns only logs that response could not have shown. Not with cursor., schema: { type: string } }
       responses:
         "200":
           description: One page
@@ -718,9 +729,10 @@ components:
         to: { type: string, format: date-time }
     Log:
       type: object
-      required: [ts, service, severity_number, body]
+      required: [ts, ingest_ts, service, severity_number, body]
       properties:
         ts: { type: string, format: date-time }
+        ingest_ts: { type: string, format: date-time, description: When the server stored the record; with ts it identifies the record. }
         observed_ts: { type: string, format: date-time }
         service: { type: string }
         environment: { type: string }
@@ -743,7 +755,8 @@ components:
         next_cursor: { type: string }
         range: { $ref: "#/components/schemas/Range" }
         limit: { type: integer }
-        truncated: { type: boolean, description: True when next_cursor is present. }
+        truncated: { type: boolean, description: True when next_cursor is present, or for a since response when logs were left out. }
+        tail_cursor: { type: string, description: Pass as since to fetch only newer logs. }
     Span:
       type: object
       required: [ts, end_ts, duration_ns, service, trace_id, span_id, name, kind, status_code]
