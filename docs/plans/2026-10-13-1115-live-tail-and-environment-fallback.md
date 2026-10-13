@@ -233,26 +233,26 @@ Every existing command keeps the same one-minute bound per request. Tests call `
 - Modify: `internal/cli/cli.go`, `internal/cli/logs.go`
 - Test: `internal/cli/cli_test.go`
 
-- [ ] **Step 1: Restructure `Run`.**
+- [x] **Step 1: Restructure `Run`.**
   - Add `RunContext(ctx context.Context, args []string, stdout, stderr io.Writer) int`, holding today's body minus the one-minute context.
   - `Run` calls it with `signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)`.
   - Drop the overall one-minute deadline; the HTTP client's `Timeout: time.Minute` already bounds each request.
   - `os/signal` and `syscall` are standard library and fine in the `cli` build.
-- [ ] **Step 2:** Run `go test ./internal/cli/`. Expected: PASS, unchanged behaviour.
-- [ ] **Step 3: Write the failing tests.** Extend `fakeAPI` so `/api/v1/logs` serves a first page with `tail_cursor`, then, when `since` is present, a page of new records, then empty pages. Add a `runCtx` helper calling `cli.RunContext`.
+- [x] **Step 2:** Run `go test ./internal/cli/`. Expected: PASS, unchanged behaviour.
+- [x] **Step 3: Write the failing tests.** Extend `fakeAPI` so `/api/v1/logs` serves a first page with `tail_cursor`, then, when `since` is present, a page of new records, then empty pages. Add a `runCtx` helper calling `cli.RunContext`.
   - `TestLogsFollow`: with `--follow --interval 10ms`, cancel the context once the fake has served two `since` requests. Check that exit is 0, the first page printed oldest first, then the new records, and that each `since` request carried the latest cursor and the same filters.
   - `TestLogsFollowJSONLines`: every stdout line parses as one log object.
   - `TestLogsFollowTruncated`: a `truncated` tail page prints the warning to stderr.
   - Usage errors: `--follow` with `--cursor`, with `--from`, and with `--to` exit 2.
-- [ ] **Step 4:** Run `go test ./internal/cli/ -run Follow`. Expected: FAIL.
-- [ ] **Step 5: Implement in `logs.go`.**
+- [x] **Step 4:** Run `go test ./internal/cli/ -run Follow`. Expected: FAIL.
+- [x] **Step 5: Implement in `logs.go`.**
   - Add the `--follow` and `--interval` (default `2s`) flags.
   - Factor the existing row printing into a function that takes the items and a direction.
   - The follow loop: fetch, print oldest first, sleep for the interval or until `ctx` is done, then fetch with `since`. A cancelled context returns `nil`; any other error returns as now.
   - Decode `items` as `[]json.RawMessage` for the JSON path, so records print exactly as the server sent them.
   - Update the usage text.
-- [ ] **Step 6:** Run `go test -race ./internal/cli/` and `rite check-cli`. Expected: PASS.
-- [ ] **Step 7: Commit.** `git commit -m "Follow new logs with tracelet logs search --follow"`
+- [x] **Step 6:** Run `go test -race ./internal/cli/` and `rite check-cli`. Expected: PASS.
+- [x] **Step 7: Commit.** `git commit -m "Follow new logs with tracelet logs search --follow"`
 
 ### Task 5: Frontend live-tail logic
 

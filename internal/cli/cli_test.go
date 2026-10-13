@@ -2,12 +2,15 @@ package cli_test
 
 import (
 	"bytes"
+	"context"
+	"encoding/json"
 	"net/http"
 	"net/http/httptest"
 	"net/url"
 	"strings"
 	"sync"
 	"testing"
+	"time"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -20,6 +23,14 @@ type fakeAPI struct {
 	mu   sync.Mutex
 	last *http.Request
 	body string
+
+	// Live tail: tails are the pages served, in order, to logs requests with
+	// since (an empty page once they run out); sinces records each such
+	// request's query; onSince, when set, runs before the response, given the
+	// 1-based count of since requests.
+	tails   []string
+	sinces  []url.Values
+	onSince func(n int)
 }
 
 const (
@@ -28,7 +39,10 @@ const (
 	logsJSON = `{"items":[{"ts":"2026-10-10T11:59:00.5Z","service":"api","severity_number":17,` +
 		`"severity_text":"ERROR","body":"payment failed"},{"ts":"2026-10-10T11:58:00Z","service":"worker",` +
 		`"severity_number":21,"body":"crash"}],"next_cursor":"abc","range":{"from":"2026-10-10T11:30:00Z",` +
-		`"to":"2026-10-10T12:00:00Z"},"limit":100,"truncated":true}`
+		`"to":"2026-10-10T12:00:00Z"},"limit":100,"truncated":true,"tail_cursor":"t0"}`
+
+	emptyTailJSON = `{"items":[],"range":{"from":"2026-10-10T11:30:00Z","to":"2026-10-10T12:00:00Z"},` +
+		`"limit":100,"truncated":false,"tail_cursor":"t9"}`
 )
 
 func newFakeAPI(t *testing.T) (*fakeAPI, *httptest.Server) {
@@ -57,6 +71,10 @@ func newFakeAPI(t *testing.T) (*fakeAPI, *httptest.Server) {
 		case "DELETE /api/v1/tokens/t1":
 			w.WriteHeader(http.StatusNoContent)
 		case "GET /api/v1/logs":
+			if r.URL.Query().Has("since") {
+				_, _ = w.Write([]byte(f.nextTail(r)))
+				return
+			}
 			_, _ = w.Write([]byte(logsJSON))
 		case "GET /api/v1/services":
 			_, _ = w.Write([]byte(servicesJSON))
@@ -79,6 +97,29 @@ func newFakeAPI(t *testing.T) (*fakeAPI, *httptest.Server) {
 	}))
 	t.Cleanup(srv.Close)
 	return f, srv
+}
+
+// nextTail records a since request and returns the page to answer it with.
+func (f *fakeAPI) nextTail(r *http.Request) string {
+	f.mu.Lock()
+	f.sinces = append(f.sinces, r.URL.Query())
+	n, onSince := len(f.sinces), f.onSince
+	page := emptyTailJSON
+	if n <= len(f.tails) {
+		page = f.tails[n-1]
+	}
+	f.mu.Unlock()
+	if onSince != nil {
+		onSince(n)
+	}
+	return page
+}
+
+func runCtx(t *testing.T, ctx context.Context, args ...string) (code int, stdout, stderr string) {
+	t.Helper()
+	var out, errOut bytes.Buffer
+	code = cli.RunContext(ctx, args, &out, &errOut)
+	return code, out.String(), errOut.String()
 }
 
 func run(t *testing.T, args ...string) (code int, stdout, stderr string) {
@@ -191,4 +232,105 @@ func TestLogsSearchForwardsNegativeLimit(t *testing.T) {
 	f, srv := newFakeAPI(t)
 	run(t, "logs", "search", "--url", srv.URL, "--limit", "-1")
 	assert.Equal(t, "-1", f.last.URL.Query().Get("limit"))
+}
+
+const (
+	tailOneJSON = `{"items":[{"ts":"2026-10-10T12:00:03Z","ingest_ts":"2026-10-10T12:00:04Z","service":"api",` +
+		`"severity_number":9,"body":"third"},{"ts":"2026-10-10T12:00:01Z","ingest_ts":"2026-10-10T12:00:03Z",` +
+		`"service":"api","severity_number":9,"body":"second"}],"range":{"from":"2026-10-10T11:30:00Z",` +
+		`"to":"2026-10-10T12:00:05Z"},"limit":100,"truncated":false,"tail_cursor":"t1"}`
+	tailTwoJSON = `{"items":[{"ts":"2026-10-10T12:00:09Z","ingest_ts":"2026-10-10T12:00:09Z","service":"worker",` +
+		`"severity_number":13,"body":"fourth"}],"range":{"from":"2026-10-10T11:30:00Z",` +
+		`"to":"2026-10-10T12:00:10Z"},"limit":100,"truncated":false,"tail_cursor":"t2"}`
+	tailTruncatedJSON = `{"items":[{"ts":"2026-10-10T12:00:09Z","ingest_ts":"2026-10-10T12:00:09Z","service":"api",` +
+		`"severity_number":9,"body":"newest"}],"range":{"from":"2026-10-10T11:30:00Z","to":"2026-10-10T12:00:10Z"},` +
+		`"limit":100,"truncated":true,"tail_cursor":"t1"}`
+)
+
+// followUntilThirdPoll runs args with --follow and cancels once the third
+// since request arrives, so the first two tail pages have been printed.
+func followUntilThirdPoll(t *testing.T, f *fakeAPI, srv *httptest.Server, extra ...string) (code int, stdout, stderr string) {
+	t.Helper()
+	ctx, cancel := context.WithTimeout(t.Context(), 10*time.Second)
+	t.Cleanup(cancel)
+	f.onSince = func(n int) {
+		if n == 3 {
+			cancel()
+		}
+	}
+	args := append([]string{"logs", "search", "--url", srv.URL, "--follow", "--interval", "10ms"}, extra...)
+	code, stdout, stderr = runCtx(t, ctx, args...)
+	return code, stdout, stderr
+}
+
+func TestLogsFollow(t *testing.T) {
+	t.Setenv("TRACELET_TOKEN", "tl_good")
+	f, srv := newFakeAPI(t)
+	f.tails = []string{tailOneJSON, tailTwoJSON}
+
+	code, out, errOut := followUntilThirdPoll(t, f, srv, "--project", "shop", "--level", "error", "--last", "30m")
+	require.Equal(t, 0, code, errOut)
+
+	var bodies []string
+	for line := range strings.SplitSeq(strings.TrimSpace(out), "\n") {
+		fields := strings.Fields(line)
+		bodies = append(bodies, strings.Join(fields[3:], " "))
+	}
+	assert.Equal(t, []string{"crash", "payment failed", "second", "third", "fourth"}, bodies,
+		"the first page and each poll print oldest first")
+	assert.NotContains(t, errOut, "more results", "a followed page has no cursor hint")
+
+	require.Len(t, f.sinces, 3)
+	for i, since := range []string{"t0", "t1", "t2"} {
+		assert.Equal(t, url.Values{
+			"project": {"shop"}, "level": {"error"}, "last": {"30m"}, "since": {since},
+		}, f.sinces[i], "each poll carries the latest cursor and the same filters")
+	}
+}
+
+func TestLogsFollowJSONLines(t *testing.T) {
+	t.Setenv("TRACELET_TOKEN", "tl_good")
+	f, srv := newFakeAPI(t)
+	f.tails = []string{tailOneJSON, tailTwoJSON}
+
+	code, out, errOut := followUntilThirdPoll(t, f, srv, "--json")
+	require.Equal(t, 0, code, errOut)
+
+	var bodies []string
+	for line := range strings.SplitSeq(strings.TrimSpace(out), "\n") {
+		var rec struct {
+			Body string `json:"body"`
+		}
+		require.NoError(t, json.Unmarshal([]byte(line), &rec), line)
+		bodies = append(bodies, rec.Body)
+	}
+	assert.Equal(t, []string{"crash", "payment failed", "second", "third", "fourth"}, bodies)
+	assert.Contains(t, out, `"ingest_ts":"2026-10-10T12:00:03Z"`, "records print as the server sent them")
+}
+
+func TestLogsFollowTruncated(t *testing.T) {
+	t.Setenv("TRACELET_TOKEN", "tl_good")
+	f, srv := newFakeAPI(t)
+	f.tails = []string{tailTruncatedJSON}
+
+	code, out, errOut := followUntilThirdPoll(t, f, srv)
+	require.Equal(t, 0, code, errOut)
+	assert.Contains(t, out, "newest")
+	assert.Contains(t, errOut, "more than 100 new records since the last poll; some were not shown")
+}
+
+func TestLogsFollowUsage(t *testing.T) {
+	t.Setenv("TRACELET_TOKEN", "tl_good")
+	_, srv := newFakeAPI(t)
+	for name, extra := range map[string][]string{
+		"cursor":        {"--cursor", "abc"},
+		"from":          {"--from", "2026-10-10T11:00:00Z"},
+		"to":            {"--to", "2026-10-10T12:00:00Z"},
+		"zero interval": {"--interval", "0s"},
+	} {
+		args := append([]string{"logs", "search", "--url", srv.URL, "--follow"}, extra...)
+		code, _, errOut := runCtx(t, t.Context(), args...)
+		assert.Equal(t, 2, code, name)
+		assert.Contains(t, errOut, "--follow", name)
+	}
 }
