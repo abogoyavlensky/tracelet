@@ -263,8 +263,8 @@ Every existing command keeps the same one-minute bound per request. Tests call `
 - Create: `web/src/live.ts`, `web/src/live.test.ts`
 - Test: `web/src/search.test.ts`
 
-- [ ] **Step 1: Types and identity.** Add `ingest_ts: string` to `Log`, and change `logKey` in `LogList.tsx` to `` `${log.ts}\u0000${log.ingest_ts}` `` with its comment updated. Key `LogRow` by `logKey(log)`. `SpanDetail` already uses `logKey`, so it follows. Add `since?: string` to `LogsParams` and `tail_cursor?: string` to `LogsPage`; check whether `Page<T>` is shared with spans and add the field to the logs page type only. Add `live?: true` to `LogsSearch`. `validateLogsSearch` accepts `live` as `true`, `'1'`, or `'true'` and drops anything else. `logsApiParams` must not forward `live`.
-- [ ] **Step 2: Write the failing tests** in `live.test.ts`:
+- [x] **Step 1: Types and identity.** Add `ingest_ts: string` to `Log`, and change `logKey` in `LogList.tsx` to `` `${log.ts}\u0000${log.ingest_ts}` `` with its comment updated. Key `LogRow` by `logKey(log)`. `SpanDetail` already uses `logKey`, so it follows. Add `since?: string` to `LogsParams` and `tail_cursor?: string` to `LogsPage`; check whether `Page<T>` is shared with spans and add the field to the logs page type only. Add `live?: true` to `LogsSearch`. `validateLogsSearch` accepts `live` as `true`, `'1'`, or `'true'` and drops anything else. `logsApiParams` must not forward `live`.
+- [x] **Step 2: Write the failing tests** in `live.test.ts`:
   - `liveReducer` covers each case listed under Testing in the design.
   - `mergeLive(arrivals, base, from)` drops records older than `from` and returns the union newest first and de-duplicates by `logKey` across both lists and within arrivals. Two records equal in everything but `ingest_ts` are both kept.
   - It orders two timestamps that differ only in nanoseconds correctly.
@@ -272,10 +272,13 @@ Every existing command keeps the same one-minute bound per request. Tests call `
   - `liveEligible(range)` is true for `{last}` and `{}` and false for `{from,to}`.
   - `tailParams(search, cursor)` equals `logsApiParams(search)` plus `since` and `limit: 1000`. The maximum page makes truncation need more than 500 records a second.
   - Add a `search.test.ts` case for `live`.
-- [ ] **Step 3:** Run `cd web && npx vitest run src/live.test.ts src/search.test.ts`. Expected: FAIL.
-- [ ] **Step 4:** Implement `web/src/live.ts`. The reducer's state is `{ generation, cursor, from, arrivals, skippedAt }`, and its result tells the hook whether to reset the base query. Sort with `nsSince` from `format.ts`; if two records compare equal, keep arrivals before base.
-- [ ] **Step 5:** Run the same vitest command. Expected: PASS.
-- [ ] **Step 6: Commit.** `git commit -m "Add live-tail merging and search params"`
+- [x] **Step 3:** Run `cd web && npx vitest run src/live.test.ts src/search.test.ts`. Expected: FAIL.
+- [x] **Step 4:** Implement `web/src/live.ts`. The reducer's state is `{ generation, cursor, from, arrivals, skippedAt }`, and its result tells the hook whether to reset the base query. Sort with `nsSince` from `format.ts`; if two records compare equal, keep arrivals before base.
+- [x] **Step 5:** Run the same vitest command. Expected: PASS.
+- [x] **Step 6: Commit.** `git commit -m "Add live-tail merging and search params"`
+
+> Deviation: `logKey` lives in `web/src/live.ts`, not `LogList.tsx`, so the pure module and its tests do not import a React component. `LogsPage` and `SpanDetail` import it from there.
+> Deviation: `LiveState` also carries `resetting`, set by a reset-causing poll and cleared by the next seed. The hook resets the base query from an effect on it, so `useReducer` needs no side-channel result.
 
 ### Task 6: Live toggle on the logs page
 

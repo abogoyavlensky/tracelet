@@ -14,7 +14,7 @@ import {
 import { rangeAround } from '../timeRange'
 import { KeyValues } from './KeyValues'
 import { LogDetail } from './LogDetail'
-import { logKey } from './LogList'
+import { logKey } from '../live'
 import { LoadMore } from './States'
 import { severityBg } from './tones'
 

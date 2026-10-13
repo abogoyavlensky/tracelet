@@ -42,6 +42,11 @@ function oneOf<T extends string>(v: unknown, allowed: readonly T[]): T | undefin
   return allowed.find((a) => a === s)
 }
 
+/** A boolean flag in the URL: `live=1` or `live=true`; anything else is off. */
+function flag(v: unknown): true | undefined {
+  return v === true || v === '1' || v === 'true' || v === 1 ? true : undefined
+}
+
 /** Attribute filters are `key:value` with a non-empty key. */
 function attrs(v: unknown): string[] | undefined {
   const list = (Array.isArray(v) ? v : [v])
@@ -73,6 +78,8 @@ export type LogsSearch = RangeSearch & {
   level?: Level
   q?: string
   attr?: string[]
+  /** Follow new logs; only takes effect on a relative range. */
+  live?: true
 }
 
 export const spanStatuses = ['ok', 'error', 'unset'] as const
@@ -125,6 +132,7 @@ export function validateLogsSearch(raw: Raw): LogsSearch {
     level: oneOf(raw.level, levels),
     q: str(raw.q),
     attr: attrs(raw.attr),
+    live: flag(raw.live),
     ...rangeSearch(raw),
   }
 }
