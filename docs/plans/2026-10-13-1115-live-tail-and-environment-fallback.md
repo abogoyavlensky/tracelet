@@ -355,10 +355,12 @@ Every existing command keeps the same one-minute bound per request. Tests call `
 ### Task 9: Check and pull request
 
 - [x] **Step 1:** Run `rite check`. Expected: every step passes.
-- [ ] **Step 2:** Push `live-tail` and open a PR. It summarises both changes, explains why the tail cursor is an ingest stamp, attaches the Task 7 screenshots, and lists the new `since` parameter and `tail_cursor` field as API additions. Link the PR to the thread with `mcp__t3-code__link_pull_request`.
-- [ ] **Step 3:** Wait for `ci` to pass on both architectures. Do not merge; the owner merges, which deploys.
+- [x] **Step 2:** Push `live-tail` and open a PR. It summarises both changes, explains why the tail cursor is an ingest stamp, attaches the Task 7 screenshots, and lists the new `since` parameter and `tail_cursor` field as API additions. Link the PR to the thread with `mcp__t3-code__link_pull_request`.
+- [x] **Step 3:** Wait for `ci` to pass on both architectures. Do not merge; the owner merges, which deploys.
 
 ## Completion summary
+
+PR: https://github.com/abogoyavlensky/tracelet/pull/9. `ci` passed on amd64 and arm64; not merged, the owner merges.
 
 **Implemented.** The `deployment.environment` fallback (logs, spans, and metrics share `resourceInfo`). `Snapshot.Watermark`, the tail cursor, and `since` in the logs search; `since` and `tail_cursor` over HTTP and in OpenAPI; `tracelet logs search --follow` with `RunContext`; the live-tail reducer, merge, and hook with the Live toggle on the logs page; README, DESIGN, and both backlog entries. `rite check` passes, and the end-to-end run (Task 7) found no defects. Codex reviewed each task; the one must-fix was the signal-handling fixup in Task 4. The other reviews found nothing.
 
