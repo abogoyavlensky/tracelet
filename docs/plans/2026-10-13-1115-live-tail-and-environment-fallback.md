@@ -254,6 +254,8 @@ Every existing command keeps the same one-minute bound per request. Tests call `
 - [x] **Step 6:** Run `go test -race ./internal/cli/` and `rite check-cli`. Expected: PASS.
 - [x] **Step 7: Commit.** `git commit -m "Follow new logs with tracelet logs search --follow"`
 
+> Deviation: codex review found that a blocked stdout write could keep SIGINT intercepted for good; `Run` also calls `context.AfterFunc(ctx, stop)`, so a second signal takes the default action. Fixup commit.
+
 ### Task 5: Frontend live-tail logic
 
 **Files:**

@@ -62,10 +62,12 @@ type usageError struct{ msg string }
 func (e usageError) Error() string { return e.msg }
 
 // Run runs one client command and returns its exit code. SIGINT and SIGTERM
-// cancel it.
+// cancel it; a second one then takes the default action and ends the
+// process, which matters when a write to a blocked pipe cannot be cancelled.
 func Run(args []string, stdout, stderr io.Writer) int {
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer stop()
+	context.AfterFunc(ctx, stop)
 	return RunContext(ctx, args, stdout, stderr)
 }
 
