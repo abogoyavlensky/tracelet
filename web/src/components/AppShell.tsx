@@ -4,11 +4,12 @@
 import { useQuery, useQueryClient } from '@tanstack/react-query'
 import { Link, Outlet, useNavigate, useRouterState, useSearch } from '@tanstack/react-router'
 import { useEffect, useState } from 'react'
-import { type Session, getHealth, signOut } from '../api'
+import { type Session, signOut } from '../api'
 import { rememberProject } from '../project'
-import { sessionQuery } from '../session'
+import { healthQuery, sessionQuery } from '../session'
 import { useTheme } from '../theme'
 import { normalizeRange, type TimeRange } from '../timeRange'
+import { versionWatch } from '../version'
 import { icons, Mark } from './icons'
 import { Popover } from './Popover'
 import { EmptyState, Notice } from './States'
@@ -21,8 +22,16 @@ const nav = [
   { to: '/metrics', label: 'Metrics', icon: icons.metrics },
 ] as const
 
+// Lives for the page load, which is the point: the first version this page saw.
+const serverVersion = versionWatch()
+
 export function AppShell() {
   const { data: session } = useQuery(sessionQuery)
+  // Here, not in the refresh button: the shell is mounted on every page, so
+  // the baseline is the version the page loaded with, not the one a list page
+  // happened to see after a deploy.
+  const health = useQuery(healthQuery)
+  const stale = serverVersion(health.data?.version)
   const project = useProject()
   const search = useSearch({ strict: false }) as { project?: string }
   const navigate = useNavigate()
@@ -44,7 +53,7 @@ export function AppShell() {
   if (!session) return null
   return (
     <div className="flex h-dvh flex-col bg-canvas font-sans text-fg">
-      <Header session={session} project={project.slug} />
+      <Header session={session} project={project.slug} stale={stale} />
       {rejected && (
         <Notice>
           Project {rejected} is not visible to this token, so this shows {project.slug ?? 'nothing'}{' '}
@@ -57,7 +66,15 @@ export function AppShell() {
   )
 }
 
-function Header({ session, project }: { session: Session; project: string | undefined }) {
+function Header({
+  session,
+  project,
+  stale,
+}: {
+  session: Session
+  project: string | undefined
+  stale: boolean
+}) {
   const pathname = useRouterState({ select: (s) => s.location.pathname })
   // Pages whose time range the header holds on wide screens.
   const listPage = pathname === '/logs' || pathname === '/traces' || pathname.startsWith('/metrics')
@@ -91,7 +108,7 @@ function Header({ session, project }: { session: Session; project: string | unde
       </nav>
       <div className="ml-auto flex items-center gap-1 md:gap-2">
         {listPage && <HeaderRange />}
-        {listPage && <RefreshButton />}
+        {listPage && <RefreshButton stale={stale} />}
         {listPage && <span className="mx-1 hidden h-6 w-px bg-line md:block" />}
         <HealthDot />
         <ThemeToggle />
@@ -162,32 +179,31 @@ export function rangeNavigation(r: TimeRange) {
   } as never
 }
 
-function RefreshButton() {
+function RefreshButton({ stale }: { stale: boolean }) {
   const queryClient = useQueryClient()
+  const title = stale ? 'A new version is available: reload' : 'Run the search again'
   return (
     <button
       type="button"
-      aria-label="Refresh"
-      title="Run the search again"
+      aria-label={stale ? title : 'Refresh'}
+      title={title}
       onClick={() =>
-        void queryClient.invalidateQueries({
-          predicate: (q) => q.queryKey[0] !== 'session' && q.queryKey[0] !== 'health',
-        })
+        stale
+          ? window.location.reload()
+          : void queryClient.invalidateQueries({
+              predicate: (q) => q.queryKey[0] !== 'session' && q.queryKey[0] !== 'health',
+            })
       }
-      className="hidden size-9 place-items-center rounded-md text-muted hover:bg-raised hover:text-fg md:grid"
+      className="relative grid size-9 place-items-center rounded-md text-muted hover:bg-raised hover:text-fg"
     >
       <icons.refresh size={16} />
+      {stale && <span className="absolute top-1.5 right-1.5 size-2 rounded-full bg-accent" />}
     </button>
   )
 }
 
 function HealthDot() {
-  const health = useQuery({
-    queryKey: ['health'],
-    queryFn: getHealth,
-    refetchInterval: 10_000,
-    retry: false,
-  })
+  const health = useQuery(healthQuery)
   const [tone, title] = health.isError
     ? ['bg-error ring-error/15', 'Server unreachable']
     : health.data?.status === 'degraded'
