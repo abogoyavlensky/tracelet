@@ -106,6 +106,23 @@
   );
 }
 
+/* Room under a scrolling region for the phone tab bar (h-14) and the home indicator. */
+@utility pb-tabbar {
+  padding-bottom: calc(4rem + env(safe-area-inset-bottom));
+}
+
+/*
+ * iOS Safari zooms into any focused field whose text is under 16 px. Unlayered
+ * rules beat Tailwind's utilities, so this covers every field, now and later.
+ */
+@media (pointer: coarse) {
+  input,
+  select,
+  textarea {
+    font-size: max(16px, 1em);
+  }
+}
+
 /* iOS centres the value of a datetime-local input; align it with other fields. */
 input::-webkit-date-and-time-value {
   text-align: left;

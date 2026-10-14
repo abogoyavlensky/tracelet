@@ -20,7 +20,7 @@ export function Pane({
     return () => window.removeEventListener('keydown', onKey)
   }, [onClose])
   return (
-    <aside className="fixed inset-x-0 top-14 bottom-0 z-20 overflow-y-auto bg-surface pb-16 md:static md:z-auto md:w-[44%] md:max-w-[760px] md:min-w-[420px] md:shrink-0 md:border-l md:border-line md:pb-0">
+    <aside className="fixed inset-x-0 top-14 bottom-0 z-20 overflow-y-auto bg-surface pb-tabbar md:static md:z-auto md:w-[44%] md:max-w-[760px] md:min-w-[420px] md:shrink-0 md:border-l md:border-line md:pb-0">
       <div className="sticky top-0 z-10 flex h-11 items-center border-b border-line bg-surface/95 px-3 backdrop-blur md:px-5">
         <button
           type="button"
