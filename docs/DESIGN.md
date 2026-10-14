@@ -188,6 +188,8 @@ Filters are project, service, environment, and release everywhere. Investigation
 
 **Metrics view (built, phase 2 slice 1).** A third header item, Metrics, opens a catalog of the project's metrics with their kind, unit, services, and series count. A metric opens a chart page whose aggregation, grouping, filters, and step live in the URL. The chart is uPlot drawn in the semantic tokens and rebuilt on a theme change; lines never cross an empty step, and a value with gaps on both sides is drawn as a point. A legend below shows each group's value at the cursor and toggles its series. The header kept its tabs: three views still fit.
 
+**Installable app (built).** A web app manifest and home screen icons make the UI installable on phones and desktops, and `theme-color` follows the light or dark theme so the browser chrome matches the header. There is no service worker: an observability dashboard has nothing useful to show offline, and a cached app shell could outlive a deploy and run a stale frontend against a newer server. The header's refresh button re-runs the page's searches, and reloads the whole page when the health endpoint reports a different server version than the page loaded with, because an installed app has no reload of its own.
+
 Dashboards start with time series, stat values, tables, and histograms. Panel definitions are versioned JSON holding signal and metric selection, filters, grouping, aggregation, units, visualisation settings, and layout. Import and export through the API and CLI. Layout is a simple CSS grid first; draggable layout is evaluated later.
 
 Clicking a chart interval or series opens the corresponding filtered records. Aggregated metrics link to traces only through exemplars or another valid association.
@@ -317,6 +319,7 @@ Phases 1 to 4 follow the vision. Each feature ships with API and CLI access. Sco
 | UI layout and theme | Top header, full-width lists, detail pane on selection; light default with a stored dark choice; semantic colour tokens | Chosen from four screenshotted variants; scanning wants full width, reading wants a pane beside the list |
 | Live tail cursor | Ingest-stamp watermark from the pinned hot table, plus the previous `to` | A `ts` cursor skips late records; stamps commit in order, so the hot maximum is a gap-free prefix |
 | Live tail transport | Polling first; SSE later | No server push yet; the cursor is the same either way |
+| Installable UI | Manifest and icons, no service worker | Installs on iOS and Android; no stale app shell after a deploy; push for alerts would add one |
 | Frontend routing | TanStack Router, code-based routes, plain query strings | Typed search params for URL-encoded investigation state, without a router plugin or codegen |
 
 ## References
