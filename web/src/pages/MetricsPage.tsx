@@ -79,7 +79,7 @@ export function MetricsPage({ search }: { search: MetricsSearch }) {
         </Notice>
       )}
       <section
-        className="min-h-0 flex-1 overflow-y-auto bg-surface pb-16 md:pb-0"
+        className="min-h-0 flex-1 overflow-y-auto bg-surface pb-tabbar md:pb-0"
         aria-label="Metrics"
       >
         {metrics.isPending && project ? (

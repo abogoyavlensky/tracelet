@@ -98,6 +98,9 @@ live in its URL. The logs explorer has a Live toggle for a relative time range:
 it polls every 2 seconds and merges new records into the list without moving
 the selected record or the scroll position.
 
+On a phone, use "Add to Home Screen" (iOS) or "Install app" (Android) to open
+Tracelet as an app.
+
 Search logs from the CLI:
 
 ```sh

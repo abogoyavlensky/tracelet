@@ -180,7 +180,7 @@ export function TracePage({ traceId, search }: { traceId: string; search: TraceS
       )}
       <div className="flex min-h-0 flex-1">
         <section
-          className="min-w-0 flex-1 overflow-y-auto bg-surface pb-16 md:pb-0"
+          className="min-w-0 flex-1 overflow-y-auto bg-surface pb-tabbar md:pb-0"
           aria-label="Waterfall"
         >
           <Waterfall

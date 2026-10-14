@@ -124,7 +124,7 @@ export function TracesPage({ search }: { search: TracesSearch }) {
         />
       </FilterBar>
       <section
-        className="min-h-0 flex-1 overflow-y-auto bg-surface pb-16 md:pb-0"
+        className="min-h-0 flex-1 overflow-y-auto bg-surface pb-tabbar md:pb-0"
         aria-label={rootOnly ? 'Traces' : 'Spans'}
       >
         {spans.isPending && project ? (

@@ -1,4 +1,6 @@
 // A button that opens a small panel below it. Closes on outside click and Esc.
+// On phones the panel is fixed to the screen edge on its side instead of the
+// button's: a button in the middle of a row would push the panel off-screen.
 import { type ReactNode, useEffect, useRef, useState } from 'react'
 
 export function Popover({
@@ -48,8 +50,8 @@ export function Popover({
       </button>
       {open && (
         <div
-          className={`absolute top-full z-30 mt-1.5 max-w-[calc(100vw-1.5rem)] rounded-lg border border-line bg-surface p-3 shadow-lg ${
-            align === 'end' ? 'right-0' : 'left-0'
+          className={`fixed top-auto z-30 mt-1.5 max-w-[calc(100vw-1.5rem)] rounded-lg border border-line bg-surface p-3 shadow-lg md:absolute md:top-full ${
+            align === 'end' ? 'right-3 md:right-0' : 'left-3 md:left-0'
           } ${panelClassName}`}
         >
           {children(() => setOpen(false))}

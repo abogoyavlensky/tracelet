@@ -95,7 +95,7 @@ function Panel({
             type="datetime-local"
             value={from}
             onChange={(e) => setFrom(e.target.value)}
-            className="mt-0.5 block h-9 w-full rounded-md border border-line bg-surface px-2 text-sm text-fg"
+            className="mt-0.5 block h-9 w-full min-w-0 appearance-none rounded-md border border-line bg-surface px-2 text-sm text-fg"
           />
         </label>
         <label className="mt-2 block text-xs text-muted">
@@ -104,7 +104,7 @@ function Panel({
             type="datetime-local"
             value={to}
             onChange={(e) => setTo(e.target.value)}
-            className="mt-0.5 block h-9 w-full rounded-md border border-line bg-surface px-2 text-sm text-fg"
+            className="mt-0.5 block h-9 w-full min-w-0 appearance-none rounded-md border border-line bg-surface px-2 text-sm text-fg"
           />
         </label>
         {error && <p className="mt-2 text-xs text-error">{error}</p>}

@@ -31,7 +31,9 @@ export function ErrorState({ error, onRetry }: { error: unknown; onRetry?: () =>
 
 export function EmptyState({ title, children }: { title: string; children?: ReactNode }) {
   return (
-    <div className="mx-auto max-w-md px-6 py-16 text-center">
+    // w-full: auto margins in the shell's column flexbox would otherwise size
+    // the box to its widest unbreakable line, wider than a phone.
+    <div className="mx-auto w-full max-w-md px-6 py-16 text-center">
       <p className="font-medium">{title}</p>
       {children && <div className="mt-1.5 text-sm text-muted">{children}</div>}
     </div>

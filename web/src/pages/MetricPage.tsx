@@ -187,7 +187,7 @@ export function MetricPage({ name, search }: { name: string; search: MetricSearc
         </Notice>
       )}
       <section
-        className="min-h-0 flex-1 overflow-y-auto bg-surface pb-16 md:pb-0"
+        className="min-h-0 flex-1 overflow-y-auto bg-surface pb-tabbar md:pb-0"
         aria-label={`Metric ${name}`}
       >
         <div className="flex flex-wrap items-baseline gap-x-3 gap-y-1 px-3 pt-4 pb-2 md:px-5">

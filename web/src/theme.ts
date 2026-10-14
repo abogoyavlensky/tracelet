@@ -1,5 +1,6 @@
 // Light by default; dark is an explicit choice stored in localStorage. The
-// inline script in index.html applies a stored choice before first paint.
+// inline script in index.html applies a stored choice before first paint. The
+// theme also sets the browser's theme colour, which tints the mobile chrome.
 import { useState } from 'react'
 
 export type Theme = 'light' | 'dark'
@@ -12,6 +13,8 @@ export function getTheme(): Theme {
 
 export function applyTheme(theme: Theme): void {
   document.documentElement.classList.toggle('dark', theme === 'dark')
+  const surface = getComputedStyle(document.documentElement).getPropertyValue('--surface').trim()
+  if (surface) document.querySelector('meta[name="theme-color"]')?.setAttribute('content', surface)
 }
 
 export function setTheme(theme: Theme): void {
