@@ -623,6 +623,101 @@ paths:
         "404": { $ref: "#/components/responses/Error" }
         "503": { $ref: "#/components/responses/Unavailable" }
 
+  /api/v1/dashboards:
+    get:
+      summary: List dashboards
+      description: Needs a `read` token. The project's dashboards by title.
+      operationId: listDashboards
+      parameters:
+        - $ref: "#/components/parameters/Project"
+      responses:
+        "200":
+          description: Dashboards by title
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [items]
+                properties:
+                  items:
+                    type: array
+                    items: { $ref: "#/components/schemas/DashboardSummary" }
+        "400": { $ref: "#/components/responses/Error" }
+        "401": { $ref: "#/components/responses/Error" }
+        "403": { $ref: "#/components/responses/Error" }
+        "404": { $ref: "#/components/responses/Error" }
+
+  /api/v1/dashboards/{uid}:
+    parameters:
+      - $ref: "#/components/parameters/DashboardUID"
+      - $ref: "#/components/parameters/Project"
+    get:
+      summary: Get a dashboard
+      description: Needs a `read` token.
+      operationId: getDashboard
+      responses:
+        "200":
+          description: The dashboard
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Dashboard" }
+        "400": { $ref: "#/components/responses/Error" }
+        "401": { $ref: "#/components/responses/Error" }
+        "403": { $ref: "#/components/responses/Error" }
+        "404": { $ref: "#/components/responses/Error" }
+    put:
+      summary: Create or replace a dashboard
+      description: |
+        Needs an `admin` token. The body is a dashboard as GET returns it;
+        `uid` may be left out but must match the path when present, and
+        `created_at` and `updated_at` are ignored. The server fills defaults
+        (`schema_version` 1, `last` 1h, `refresh` 30s, panel ids `p1`, `p2`,
+        …, widths, and `reduce` last) and returns the stored form.
+
+        `revision` decides what may be overwritten:
+
+        - absent: create or replace unconditionally, as `tracelet
+          dashboards apply` does;
+        - `0`: create only; 409 if the dashboard exists;
+        - `N`: replace only if the stored revision is still N; 409 otherwise,
+          naming the current revision.
+
+        A write that changes nothing keeps the stored revision, so applying
+        the same document twice is a no-op. Unknown fields are a 400.
+      operationId: putDashboard
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/Dashboard" }
+      responses:
+        "200":
+          description: Replaced, or unchanged
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Dashboard" }
+        "201":
+          description: Created
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Dashboard" }
+        "400": { $ref: "#/components/responses/Error" }
+        "401": { $ref: "#/components/responses/Error" }
+        "403": { $ref: "#/components/responses/Error" }
+        "404": { $ref: "#/components/responses/Error" }
+        "409": { $ref: "#/components/responses/Error" }
+        "413": { $ref: "#/components/responses/Error" }
+    delete:
+      summary: Delete a dashboard
+      description: Needs an `admin` token.
+      operationId: deleteDashboard
+      responses:
+        "204": { description: Deleted }
+        "400": { $ref: "#/components/responses/Error" }
+        "401": { $ref: "#/components/responses/Error" }
+        "403": { $ref: "#/components/responses/Error" }
+        "404": { $ref: "#/components/responses/Error" }
+
 components:
   securitySchemes:
     bearer:
@@ -660,6 +755,13 @@ components:
       in: query
       description: A Go duration ending now, such as `30m` or `2h`. Excludes `from` and `to`.
       schema: { type: string }
+
+    DashboardUID:
+      name: uid
+      in: path
+      required: true
+      description: The dashboard's stable identifier, chosen by its author.
+      schema: { type: string, pattern: "^[a-z0-9][a-z0-9-]{0,63}$" }
 
   responses:
     Error:
@@ -906,6 +1008,82 @@ components:
                     type: integer
                     description: For histogram quantiles, series whose bucket bounds differ from the merged ones and are left out.
             truncated: { type: boolean }
+    DashboardSummary:
+      type: object
+      required: [uid, title, panels, revision, updated_at]
+      properties:
+        uid: { type: string }
+        title: { type: string }
+        panels: { type: integer, description: Number of panels. }
+        revision: { type: integer }
+        updated_at: { type: string, format: date-time }
+    Dashboard:
+      type: object
+      required: [title, panels]
+      additionalProperties: false
+      properties:
+        uid: { type: string, pattern: "^[a-z0-9][a-z0-9-]{0,63}$" }
+        revision:
+          type: integer
+          minimum: 0
+          description: Server-managed; 1 on create, one more on each write that changes the dashboard. See PUT for its meaning in a request.
+        created_at: { type: string, format: date-time, readOnly: true }
+        updated_at: { type: string, format: date-time, readOnly: true }
+        title: { type: string, maxLength: 200 }
+        schema_version: { type: integer, enum: [1], description: How to read the document. Defaults to 1. }
+        last: { type: string, description: "The default range, a Go duration such as `6h`. Defaults to `1h`." }
+        refresh:
+          type: string
+          enum: ["off", 10s, 30s, 1m, 5m, 15m]
+          description: The default auto-refresh interval. Defaults to `30s`.
+        panels:
+          type: array
+          maxItems: 30
+          items: { $ref: "#/components/schemas/DashboardPanel" }
+    DashboardPanel:
+      type: object
+      required: [type, metric]
+      additionalProperties: false
+      properties:
+        id:
+          type: string
+          pattern: "^[a-z0-9][a-z0-9-]{0,39}$"
+          description: Unique within the dashboard; assigned `p<n>` when left out.
+        title: { type: string, maxLength: 200, description: Shown instead of the metric name. }
+        type:
+          type: string
+          enum: [timeseries, stat, table]
+          description: A chart; one number (cannot be grouped); or one row per group.
+        width:
+          type: integer
+          minimum: 1
+          maximum: 4
+          description: Quarters of the widest grid. Defaults to 2, or 1 for stat.
+        reduce:
+          type: string
+          enum: [last, sum]
+          description: |
+            Stat and table only. `last` (the default) is the latest step that
+            has ended; `sum` adds every step and needs `aggregate` increase.
+        metric: { $ref: "#/components/schemas/DashboardMetricQuery" }
+    DashboardMetricQuery:
+      type: object
+      required: [name]
+      additionalProperties: false
+      description: |
+        The parameters of GET /api/v1/metrics/query, without project and
+        range, which the dashboard supplies. Whether the aggregation fits
+        the metric is checked when the panel runs.
+      properties:
+        name: { type: string }
+        aggregate: { type: string, pattern: "^(rate|increase|avg|min|max|sum|p[0-9]{1,2}(\\.[0-9])?)$" }
+        group_by: { type: string }
+        service: { type: string }
+        environment: { type: string }
+        attr:
+          type: array
+          items: { type: string, description: "key:value" }
+        step: { type: string, description: Whole seconds, at least 10s. }
     Health:
       type: object
       required: [status, version, ready]

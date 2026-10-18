@@ -474,6 +474,44 @@ func TestEndToEnd(t *testing.T) {
 	assert.InDelta(t, 0.1, got[0], 1e-9)
 	assert.InDelta(t, 0.3, got[1], 1e-9)
 
+	// A dashboard over those metrics: the admin writes it, a read token sees
+	// it and cannot change it, and writing it again changes nothing.
+	dash := []byte(`{"title":"Shop","last":"1h","panels":[
+	  {"type":"timeseries","metric":{"name":"orders.created","aggregate":"rate","group_by":"service"}},
+	  {"type":"stat","reduce":"sum","metric":{"name":"orders.created","aggregate":"increase","step":"1m"}}]}`)
+	code, resp = s.call(http.MethodPut, "/api/v1/dashboards/shop?project=shop", adminToken, "application/json", dash)
+	require.Equal(t, http.StatusCreated, code, string(resp))
+	type dashboardDoc struct {
+		Revision int    `json:"revision"`
+		Last     string `json:"last"`
+		Panels   []struct {
+			ID     string            `json:"id"`
+			Metric map[string]string `json:"metric"`
+		} `json:"panels"`
+	}
+	var saved dashboardDoc
+	s.getJSON("/api/v1/dashboards/shop", readTok, &saved)
+	require.Len(t, saved.Panels, 2)
+	assert.Equal(t, []string{"p1", "p2"}, []string{saved.Panels[0].ID, saved.Panels[1].ID})
+	code, _ = s.call(http.MethodPut, "/api/v1/dashboards/shop", readTok, "application/json", dash)
+	assert.Equal(t, http.StatusForbidden, code, "read tokens cannot edit dashboards")
+	code, resp = s.call(http.MethodPut, "/api/v1/dashboards/shop?project=shop", adminToken, "application/json", dash)
+	require.Equal(t, http.StatusOK, code, string(resp))
+	var again dashboardDoc
+	require.NoError(t, json.Unmarshal(resp, &again))
+	assert.Equal(t, 1, again.Revision, "applying the same dashboard twice is a no-op")
+
+	// Each panel's query runs against the data the dashboard names.
+	for _, p := range saved.Panels {
+		q := url.Values{"last": {saved.Last}}
+		for k, v := range p.Metric {
+			q.Set(k, v)
+		}
+		var res metricResult
+		s.getJSON("/api/v1/metrics/query?"+q.Encode(), readTok, &res)
+		assert.NotEmpty(t, nonNull(res), "panel %s has data", p.ID)
+	}
+
 	// A browser signs in with the admin token and then reads with only the
 	// session cookie, which OTLP does not accept.
 	jar, err := cookiejar.New(nil)

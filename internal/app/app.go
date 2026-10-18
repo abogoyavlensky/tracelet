@@ -17,6 +17,7 @@ import (
 	"sync/atomic"
 	"time"
 
+	"github.com/abogoyavlensky/tracelet/internal/dashboard"
 	"github.com/abogoyavlensky/tracelet/internal/duckdb"
 	"github.com/abogoyavlensky/tracelet/internal/flush"
 	"github.com/abogoyavlensky/tracelet/internal/httpapi"
@@ -104,6 +105,7 @@ func (a *App) build(ctx context.Context) error {
 		Info:         httpapi.Info{Version: a.cfg.Version},
 		Auth:         projects,
 		Projects:     projects,
+		Dashboards:   dashboard.NewService(sqlite.NewDashboardStore(a.db), time.Now),
 		Ingester:     a.ingester,
 		Queries:      query.Opener{Store: a.store, Manifest: a.manifest, Gate: a.gate, DataDir: a.cfg.DataDir},
 		IngestStats:  a.ingester,

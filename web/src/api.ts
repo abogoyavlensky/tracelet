@@ -303,3 +303,91 @@ export function getMetricAttributes(params: MetricAttributesParams): Promise<Met
 export function queryMetric(params: MetricQueryParams): Promise<MetricResult> {
   return fetchJSON<MetricResult>(`/api/v1/metrics/query${toQuery(params)}`)
 }
+
+export type PanelType = 'timeseries' | 'stat' | 'table'
+
+export type Reduce = 'last' | 'sum'
+
+export type Refresh = 'off' | '10s' | '30s' | '1m' | '5m' | '15m'
+
+/** A panel's metric query: the metric query's parameters without project and range. */
+export type PanelMetric = {
+  name: string
+  aggregate?: string
+  group_by?: string
+  service?: string
+  environment?: string
+  attr?: string[]
+  step?: string
+}
+
+/** A panel as written; the server assigns id, width, and reduce when left out. */
+export type DashboardPanel = {
+  id?: string
+  title?: string
+  type: PanelType
+  width?: number
+  reduce?: Reduce
+  metric: PanelMetric
+}
+
+/** A panel as stored, with every default filled in. */
+export type StoredPanel = DashboardPanel & { id: string; width: number }
+
+export type DashboardDefinition = {
+  title: string
+  schema_version?: number
+  last?: string
+  refresh?: Refresh
+  panels: DashboardPanel[]
+}
+
+export type Dashboard = {
+  uid: string
+  revision: number
+  created_at: string
+  updated_at: string
+  title: string
+  schema_version: number
+  last: string
+  refresh: Refresh
+  panels: StoredPanel[]
+}
+
+/** A write: revision absent overwrites, 0 creates only, N updates only from N. */
+export type DashboardWrite = DashboardDefinition & { revision?: number }
+
+export type DashboardSummary = {
+  uid: string
+  title: string
+  panels: number
+  revision: number
+  updated_at: string
+}
+
+export type ProjectParams = { project?: string }
+
+export function listDashboards(params: ProjectParams): Promise<{ items: DashboardSummary[] }> {
+  return fetchJSON<{ items: DashboardSummary[] }>(`/api/v1/dashboards${toQuery(params)}`)
+}
+
+export function getDashboard(uid: string, params: ProjectParams): Promise<Dashboard> {
+  return fetchJSON<Dashboard>(`/api/v1/dashboards/${encodeURIComponent(uid)}${toQuery(params)}`)
+}
+
+export function putDashboard(
+  uid: string,
+  body: DashboardWrite,
+  params: ProjectParams,
+): Promise<Dashboard> {
+  return fetchJSON<Dashboard>(`/api/v1/dashboards/${encodeURIComponent(uid)}${toQuery(params)}`, {
+    method: 'PUT',
+    body: JSON.stringify(body),
+  })
+}
+
+export function deleteDashboard(uid: string, params: ProjectParams): Promise<void> {
+  return fetchJSON<void>(`/api/v1/dashboards/${encodeURIComponent(uid)}${toQuery(params)}`, {
+    method: 'DELETE',
+  })
+}

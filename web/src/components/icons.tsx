@@ -93,6 +93,26 @@ export const icons = {
       <path d="M5 6h14M5 12h14M5 18h9" />
     </Icon>
   ),
+  dashboards: (p: IconProps) => (
+    <Icon {...p}>
+      <rect x="4" y="4" width="7" height="7" rx="1.5" />
+      <rect x="13" y="4" width="7" height="7" rx="1.5" />
+      <rect x="4" y="13" width="7" height="7" rx="1.5" />
+      <rect x="13" y="13" width="7" height="7" rx="1.5" />
+    </Icon>
+  ),
+  more: (p: IconProps) => (
+    <Icon {...p}>
+      <circle cx="6" cy="12" r="0.9" fill="currentColor" />
+      <circle cx="12" cy="12" r="0.9" fill="currentColor" />
+      <circle cx="18" cy="12" r="0.9" fill="currentColor" />
+    </Icon>
+  ),
+  trash: (p: IconProps) => (
+    <Icon {...p}>
+      <path d="M5 7h14M10 7V5h4v2M7 7l1 12h8l1-12" />
+    </Icon>
+  ),
   plus: (p: IconProps) => (
     <Icon {...p}>
       <path d="M12 5v14M5 12h14" />

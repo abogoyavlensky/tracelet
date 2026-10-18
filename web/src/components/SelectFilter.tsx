@@ -9,14 +9,17 @@ export function SelectFilter({
   value,
   options,
   onChange,
+  neutral,
 }: {
   label: string
   value: string
   options: Option[]
   onChange: (value: string) => void
+  /** A setting rather than a filter: never highlighted as set. */
+  neutral?: boolean
 }) {
   const current = options.find((o) => o.value === value) ?? options[0]
-  const active = value !== options[0]?.value
+  const active = !neutral && value !== options[0]?.value
   return (
     <label
       className={`relative flex h-9 shrink-0 cursor-pointer items-center gap-1.5 rounded-md border px-2.5 text-[13px] focus-within:ring-2 focus-within:ring-accent/40 md:h-8 ${

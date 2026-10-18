@@ -30,7 +30,7 @@ both Go and the frontend.
   single-page frontend. Every route is described in `api/openapi.yaml`, and a
   test fails when a registered pattern is missing from it.
 - Packages: `internal/app` (wiring, maintenance loop), `internal/httpapi`,
-  `internal/cli`, `internal/project` (projects, tokens), `internal/otlp`
+  `internal/cli`, `internal/project` (projects, tokens), `internal/dashboard` (dashboards: validation, revisions), `internal/otlp`
   (decode, convert), `internal/ingest` (queue, single writer loop),
   `internal/duckdb` (hot store, writer), `internal/flush` (flush, reconcile,
   retention), `internal/manifest`, `internal/query` (gate, snapshot, search),
