@@ -34,7 +34,7 @@ func TestMigrateAppliesOnce(t *testing.T) {
 	require.NoError(t, err)
 	applied, err := sqlite.Migrate(t.Context(), db)
 	require.NoError(t, err)
-	assert.Equal(t, []int{1}, applied)
+	assert.Equal(t, []int{1, 2}, applied)
 	require.NoError(t, db.Close())
 
 	db, err = sqlite.Open(path)
@@ -46,7 +46,7 @@ func TestMigrateAppliesOnce(t *testing.T) {
 
 	version, err := sqlite.Version(t.Context(), db)
 	require.NoError(t, err)
-	assert.Equal(t, 1, version)
+	assert.Equal(t, 2, version)
 
 	rows, err := db.Query("SELECT name FROM sqlite_master WHERE type = 'table' ORDER BY name")
 	require.NoError(t, err)
@@ -58,7 +58,7 @@ func TestMigrateAppliesOnce(t *testing.T) {
 		tables = append(tables, name)
 	}
 	require.NoError(t, rows.Err())
-	assert.Equal(t, []string{"files", "projects", "schema_migrations", "tokens"}, tables)
+	assert.Equal(t, []string{"dashboards", "files", "projects", "schema_migrations", "tokens"}, tables)
 }
 
 func TestForeignKeysEnforced(t *testing.T) {
