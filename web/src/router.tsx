@@ -161,9 +161,11 @@ export const dashboardRoute = createRoute({
   },
   validateSearch: validateDashboardSearch,
   component: function DashboardRoute() {
-    return (
-      <DashboardPage uid={dashboardRoute.useParams().uid} search={dashboardRoute.useSearch()} />
-    )
+    const { uid } = dashboardRoute.useParams()
+    const search = dashboardRoute.useSearch()
+    // A fresh page per dashboard, so an edit draft never follows navigation
+    // to another dashboard and gets saved there.
+    return <DashboardPage key={`${search.project ?? ''}/${uid}`} uid={uid} search={search} />
   },
 })
 
