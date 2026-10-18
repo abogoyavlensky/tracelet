@@ -137,6 +137,33 @@ A query returns one value per step and group: counters take `rate` or
 histograms `p50`-style quantiles, `rate`, or `avg`. Empty steps stay empty
 rather than reading zero, and the last step can read low until it completes.
 
+Keep dashboards in files and apply them, from a terminal or CI, with an admin
+token:
+
+```sh
+cat > shop-overview.json <<'JSON'
+{
+  "uid": "shop-overview",
+  "title": "Shop overview",
+  "last": "6h",
+  "panels": [
+    {"title": "Orders per second", "type": "timeseries",
+     "metric": {"name": "orders.created", "aggregate": "rate", "group_by": "service"}},
+    {"title": "Orders in range", "type": "stat", "reduce": "sum",
+     "metric": {"name": "orders.created", "aggregate": "increase"}},
+    {"title": "p95 by route", "type": "table",
+     "metric": {"name": "http.server.request.duration", "aggregate": "p95", "group_by": "http.route"}}
+  ]
+}
+JSON
+tracelet dashboards apply --project shop --file shop-overview.json   # applying again changes nothing
+tracelet dashboards export shop-overview --project shop             # the file back, for git
+tracelet dashboards list --project shop
+```
+
+Dashboards made or edited in the web UI export the same way. A read token
+views dashboards; only an admin token changes them.
+
 `traces get` prints the spans as a tree and looks back 7 days unless
 `--from`/`--to` or `--last` say otherwise; its `--json` output carries `start`
 and `end`. A trace whose root span was never exported does not show up in
