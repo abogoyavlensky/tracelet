@@ -15,6 +15,7 @@ import (
 
 	"github.com/stretchr/testify/require"
 
+	"github.com/abogoyavlensky/tracelet/internal/dashboard"
 	"github.com/abogoyavlensky/tracelet/internal/project"
 	"github.com/abogoyavlensky/tracelet/internal/sqlite"
 )
@@ -55,6 +56,24 @@ func newProjectService(t *testing.T) *project.Service {
 	_, err = sqlite.Migrate(t.Context(), db)
 	require.NoError(t, err)
 	return project.NewService(sqlite.NewProjectStore(db), time.Now, rand.Reader)
+}
+
+// newDashboardServices returns project and dashboard services over one
+// database holding projects p1 (shop), which the fake read and ingest tokens
+// are limited to, and p2 (blog).
+func newDashboardServices(t *testing.T) (*project.Service, *dashboard.Service) {
+	t.Helper()
+	db, err := sqlite.Open(filepath.Join(t.TempDir(), "tracelet.sqlite"))
+	require.NoError(t, err)
+	t.Cleanup(func() { _ = db.Close() })
+	_, err = sqlite.Migrate(t.Context(), db)
+	require.NoError(t, err)
+	store := sqlite.NewProjectStore(db)
+	for _, p := range []project.Project{{ID: "p1", Slug: "shop", Name: "Shop"}, {ID: "p2", Slug: "blog", Name: "Blog"}} {
+		p.CreatedAt = time.Now()
+		require.NoError(t, store.InsertProject(t.Context(), p))
+	}
+	return project.NewService(store, time.Now, rand.Reader), dashboard.NewService(sqlite.NewDashboardStore(db), time.Now)
 }
 
 func discardLogger() *slog.Logger { return slog.New(slog.NewTextHandler(io.Discard, nil)) }

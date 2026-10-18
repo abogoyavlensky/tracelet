@@ -11,6 +11,7 @@ import (
 	"net/http"
 	"time"
 
+	"github.com/abogoyavlensky/tracelet/internal/dashboard"
 	"github.com/abogoyavlensky/tracelet/internal/project"
 )
 
@@ -24,8 +25,10 @@ type Deps struct {
 	Info     Info
 	Auth     Authenticator
 	Projects Projects
-	Ingester Ingester
-	Queries  Snapshots
+	// Dashboards is the saved dashboards service.
+	Dashboards Dashboards
+	Ingester   Ingester
+	Queries    Snapshots
 	// IngestStats and StorageStats feed the health endpoint; either may be
 	// nil, and its section is then left out.
 	IngestStats  IngestStats
@@ -43,6 +46,7 @@ type Handler struct {
 	info         Info
 	auth         Authenticator
 	projects     Projects
+	dashboards   Dashboards
 	ingester     Ingester
 	queries      Snapshots
 	ingestStats  IngestStats
@@ -77,7 +81,7 @@ func (a *API) handle(pattern string, h http.HandlerFunc) {
 // lives under /api/; OTLP lives under /v1/.
 func NewHandler(deps Deps) *API {
 	h := &Handler{
-		info: deps.Info, auth: deps.Auth, projects: deps.Projects, ingester: deps.Ingester,
+		info: deps.Info, auth: deps.Auth, projects: deps.Projects, dashboards: deps.Dashboards, ingester: deps.Ingester,
 		queries: deps.Queries, ingestStats: deps.IngestStats, storageStats: deps.StorageStats, now: deps.Now,
 		diskPressure: deps.DiskPressure, logger: deps.Logger, crossOrigin: http.NewCrossOriginProtection(),
 	}
@@ -103,6 +107,10 @@ func NewHandler(deps Deps) *API {
 	a.handle("GET /api/v1/metrics", h.requireScope(project.ScopeRead, h.listMetrics))
 	a.handle("GET /api/v1/metrics/attributes", h.requireScope(project.ScopeRead, h.metricAttributes))
 	a.handle("GET /api/v1/metrics/query", h.requireScope(project.ScopeRead, h.queryMetric))
+	a.handle("GET /api/v1/dashboards", h.requireScope(project.ScopeRead, h.listDashboards))
+	a.handle("GET /api/v1/dashboards/{uid}", h.requireScope(project.ScopeRead, h.getDashboard))
+	a.handle("PUT /api/v1/dashboards/{uid}", h.requireScope(project.ScopeAdmin, h.putDashboard))
+	a.handle("DELETE /api/v1/dashboards/{uid}", h.requireScope(project.ScopeAdmin, h.deleteDashboard))
 	a.handle("POST /v1/logs", h.requireScope(project.ScopeIngest, h.otlpLogs))
 	a.handle("POST /v1/traces", h.requireScope(project.ScopeIngest, h.otlpTraces))
 	a.handle("POST /v1/metrics", h.requireScope(project.ScopeIngest, h.otlpMetrics))
@@ -123,7 +131,17 @@ func (h *Handler) serviceError(w http.ResponseWriter, r *http.Request, err error
 		writeError(w, http.StatusBadRequest, verr.Message)
 		return
 	}
+	if verr, ok := errors.AsType[*dashboard.ValidationError](err); ok {
+		writeError(w, http.StatusBadRequest, verr.Message)
+		return
+	}
+	if cerr, ok := errors.AsType[*dashboard.ConflictError](err); ok {
+		writeError(w, http.StatusConflict, cerr.Message)
+		return
+	}
 	switch {
+	case errors.Is(err, dashboard.ErrNotFound):
+		writeError(w, http.StatusNotFound, "dashboard not found")
 	case errors.Is(err, project.ErrSlugTaken):
 		writeError(w, http.StatusConflict, "project slug already taken")
 	case errors.Is(err, project.ErrNotFound):
