@@ -20,6 +20,7 @@ const nav = [
   { to: '/logs', label: 'Logs', icon: icons.logs },
   { to: '/traces', label: 'Traces', icon: icons.trace },
   { to: '/metrics', label: 'Metrics', icon: icons.metrics },
+  { to: '/dashboards', label: 'Dashboards', icon: icons.dashboards },
 ] as const
 
 // Lives for the page load, which is the point: the first version this page saw.
@@ -77,7 +78,11 @@ function Header({
 }) {
   const pathname = useRouterState({ select: (s) => s.location.pathname })
   // Pages whose time range the header holds on wide screens.
-  const listPage = pathname === '/logs' || pathname === '/traces' || pathname.startsWith('/metrics')
+  const listPage =
+    pathname === '/logs' ||
+    pathname === '/traces' ||
+    pathname.startsWith('/metrics') ||
+    pathname.startsWith('/dashboards/')
   return (
     <header className="flex h-14 shrink-0 items-center gap-2 border-b border-line bg-surface px-3 md:gap-4 md:px-5">
       <Link
@@ -96,13 +101,17 @@ function Header({
             key={item.to}
             to={item.to}
             search={{ project }}
-            className={`rounded-md px-3.5 py-1 text-sm ${
+            title={item.label}
+            aria-label={item.label}
+            className={`flex items-center rounded-md px-2.5 py-1 text-sm lg:px-3.5 ${
               pathname.startsWith(item.to)
                 ? 'bg-surface font-medium text-fg shadow-sm'
                 : 'text-muted hover:text-fg'
             }`}
           >
-            {item.label}
+            {/* Four views fit as labels from lg; between md and lg only the icons do. */}
+            <item.icon size={16} className="lg:hidden" />
+            <span className="hidden lg:inline">{item.label}</span>
           </Link>
         ))}
       </nav>
@@ -142,7 +151,9 @@ function ProjectPicker({ session, project }: { session: Session; project: string
               ? '/traces'
               : pathname.startsWith('/metrics')
                 ? '/metrics'
-                : '/logs',
+                : pathname.startsWith('/dashboards')
+                  ? '/dashboards'
+                  : '/logs',
             search: { project: slug },
           })
         }}
@@ -288,7 +299,7 @@ function AccountMenu({ session }: { session: Session }) {
 function TabBar({ project }: { project: string | undefined }) {
   const pathname = useRouterState({ select: (s) => s.location.pathname })
   return (
-    <nav className="fixed inset-x-0 bottom-0 z-30 grid grid-cols-3 border-t border-line bg-surface pb-[env(safe-area-inset-bottom)] md:hidden">
+    <nav className="fixed inset-x-0 bottom-0 z-30 grid grid-cols-4 border-t border-line bg-surface pb-[env(safe-area-inset-bottom)] md:hidden">
       {nav.map((item) => (
         <Link
           key={item.to}

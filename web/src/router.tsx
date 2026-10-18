@@ -10,6 +10,8 @@ import {
 } from '@tanstack/react-router'
 import { ApiError } from './api'
 import { AppShell } from './components/AppShell'
+import { DashboardPage } from './pages/DashboardPage'
+import { DashboardsPage } from './pages/DashboardsPage'
 import { LoginPage } from './pages/LoginPage'
 import { LogsPage } from './pages/LogsPage'
 import { MetricPage } from './pages/MetricPage'
@@ -21,6 +23,8 @@ import {
   parseTraceId,
   safeNext,
   stringifySearch,
+  validateDashboardSearch,
+  validateDashboardsSearch,
   validateLogsSearch,
   validateMetricSearch,
   validateMetricsSearch,
@@ -138,9 +142,43 @@ export const metricRoute = createRoute({
   },
 })
 
+export const dashboardsRoute = createRoute({
+  getParentRoute: () => appRoute,
+  path: 'dashboards',
+  validateSearch: validateDashboardsSearch,
+  component: DashboardsPage,
+})
+
+export const dashboardRoute = createRoute({
+  getParentRoute: () => appRoute,
+  path: 'dashboards/$uid',
+  params: {
+    parse: ({ uid }) => {
+      if (!/^[a-z0-9][a-z0-9-]{0,63}$/.test(uid)) throw new Error(`"${uid}" is not a dashboard uid`)
+      return { uid }
+    },
+    stringify: ({ uid }) => ({ uid }),
+  },
+  validateSearch: validateDashboardSearch,
+  component: function DashboardRoute() {
+    return (
+      <DashboardPage uid={dashboardRoute.useParams().uid} search={dashboardRoute.useSearch()} />
+    )
+  },
+})
+
 const routeTree = rootRoute.addChildren([
   loginRoute,
-  appRoute.addChildren([indexRoute, logsRoute, tracesRoute, traceRoute, metricsRoute, metricRoute]),
+  appRoute.addChildren([
+    indexRoute,
+    logsRoute,
+    tracesRoute,
+    traceRoute,
+    metricsRoute,
+    metricRoute,
+    dashboardsRoute,
+    dashboardRoute,
+  ]),
 ])
 
 export function createAppRouter(queryClient: QueryClient) {
