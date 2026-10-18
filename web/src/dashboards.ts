@@ -167,6 +167,29 @@ export function sameMetric(a: PanelMetric, b: PanelMetric): boolean {
   )
 }
 
+/**
+ * A panel given a new query, with its type and reduction changed where the
+ * query no longer allows them: a grouped stat becomes a table, and a total
+ * of anything but an increase becomes the latest value. changes says what
+ * changed, for the person saving.
+ */
+export function fitPanel<P extends DashboardPanel>(
+  panel: P,
+  metric: PanelMetric,
+): { panel: P; changes: string[] } {
+  const out: P = { ...panel, metric }
+  const changes: string[] = []
+  if (!allowedTypes(metric).includes(out.type)) {
+    out.type = 'table'
+    changes.push('the stat becomes a table, since the query is grouped')
+  }
+  if (out.reduce && !allowedReduces(metric).includes(out.reduce)) {
+    out.reduce = 'last'
+    changes.push('it shows the latest value, since only an increase adds up to a total')
+  }
+  return { panel: out, changes }
+}
+
 /** A stored dashboard as a write, guarded by the revision it was read at. */
 export function dashboardWrite(d: Dashboard, panels: DashboardPanel[] = d.panels): DashboardWrite {
   return {

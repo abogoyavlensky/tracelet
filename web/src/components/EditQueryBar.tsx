@@ -6,7 +6,7 @@ import { useQuery, useQueryClient } from '@tanstack/react-query'
 import { useNavigate } from '@tanstack/react-router'
 import { useState } from 'react'
 import { getDashboard, type PanelMetric, putDashboard } from '../api'
-import { dashboardWrite, metricFromSearch, sameMetric } from '../dashboards'
+import { dashboardWrite, fitPanel, metricFromSearch, sameMetric } from '../dashboards'
 import type { MetricSearch } from '../search'
 import { normalizeRange, rangeParams } from '../timeRange'
 
@@ -65,7 +65,7 @@ export function EditQueryBar({
         uid,
         dashboardWrite(
           fresh,
-          fresh.panels.map((p) => (p.id === panelID ? { ...p, metric } : p)),
+          fresh.panels.map((p) => (p.id === panelID ? fitPanel(p, metric).panel : p)),
         ),
         { project },
       )
@@ -79,6 +79,7 @@ export function EditQueryBar({
   }
 
   const missing = dashboard.isSuccess && !panel
+  const changes = panel ? fitPanel(panel, metricFromSearch(name, search)).changes : []
   return (
     <div className="flex flex-wrap items-center gap-x-3 gap-y-1.5 border-b border-accent/25 bg-accent/8 px-3 py-2 text-[13px] md:px-5">
       <p className="min-w-0 flex-1">
@@ -90,6 +91,9 @@ export function EditQueryBar({
             <span className="font-medium">{panel ? panel.title || panel.metric.name : '…'}</span> on{' '}
             <span className="font-medium">{dashboard.data?.title ?? uid}</span>
           </>
+        )}
+        {changes.length > 0 && (
+          <span className="block text-muted">Saving changes the panel: {changes.join('; ')}.</span>
         )}
         {error && <span className="block text-error">{error}</span>}
       </p>

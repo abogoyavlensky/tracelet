@@ -4,6 +4,7 @@ import {
   allowedReduces,
   allowedTypes,
   dashboardWrite,
+  fitPanel,
   effectiveMetric,
   metricFromSearch,
   movePanel,
@@ -212,5 +213,43 @@ describe('dashboardWrite', () => {
     })
     const extra = { type: 'timeseries' as const, metric: { name: 'n' } }
     expect(dashboardWrite(d, [...d.panels, extra]).panels).toHaveLength(2)
+  })
+})
+
+describe('fitPanel', () => {
+  it('keeps a panel the new query allows as it is', () => {
+    const panel = {
+      id: 'p1',
+      type: 'stat' as const,
+      width: 1,
+      reduce: 'sum' as const,
+      metric: { name: 'm', aggregate: 'increase' },
+    }
+    const metric = { name: 'm', aggregate: 'increase', step: '1h' }
+    expect(fitPanel(panel, metric)).toEqual({ panel: { ...panel, metric }, changes: [] })
+  })
+
+  it('turns a grouped stat into a table and a total of a rate into the latest value', () => {
+    const panel = {
+      id: 'p1',
+      type: 'stat' as const,
+      width: 1,
+      reduce: 'sum' as const,
+      metric: { name: 'm', aggregate: 'increase' },
+    }
+    const { panel: fitted, changes } = fitPanel(panel, {
+      name: 'm',
+      aggregate: 'rate',
+      group_by: 'service',
+    })
+    expect(fitted.type).toBe('table')
+    expect(fitted.reduce).toBe('last')
+    expect(fitted.id).toBe('p1')
+    expect(changes).toHaveLength(2)
+  })
+
+  it('leaves a time series alone', () => {
+    const panel = { type: 'timeseries' as const, metric: { name: 'm' } }
+    expect(fitPanel(panel, { name: 'm', group_by: 'service' }).changes).toEqual([])
   })
 })
