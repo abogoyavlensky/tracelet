@@ -9,6 +9,7 @@ import {
   spansApiParams,
   stringifySearch,
   validateLogsSearch,
+  validateDashboardSearch,
   validateMetricSearch,
   validateMetricsSearch,
   validateTraceSearch,
@@ -213,5 +214,30 @@ describe('metric searches', () => {
       from: '2026-10-12T10:00:00Z',
       to: '2026-10-12T11:00:00Z',
     })
+  })
+})
+
+describe('dashboard search', () => {
+  it('keeps a valid refresh and drops an unknown one', () => {
+    expect(validateDashboardSearch({ refresh: '10s' }).refresh).toBe('10s')
+    expect(validateDashboardSearch({ refresh: '2s' })).toHaveProperty('refresh', undefined)
+  })
+
+  it('leaves a missing range missing, so the dashboard can supply its own', () => {
+    const s = validateDashboardSearch({ project: 'shop', service: 'api' })
+    expect(s).toMatchObject({ project: 'shop', service: 'api' })
+    expect(s.last).toBeUndefined()
+    expect(s.from).toBeUndefined()
+    expect(validateDashboardSearch({ last: '6h' }).last).toBe('6h')
+  })
+
+  it('reads the panel being edited on the metric page, if well formed', () => {
+    expect(validateMetricSearch({ dashboard: 'shop-overview', panel: 'p2' })).toMatchObject({
+      dashboard: 'shop-overview',
+      panel: 'p2',
+    })
+    const bad = validateMetricSearch({ dashboard: 'Shop Overview', panel: '-p' })
+    expect(bad).toHaveProperty('dashboard', undefined)
+    expect(bad).toHaveProperty('panel', undefined)
   })
 })

@@ -2,7 +2,8 @@
 // the URL, validated, and turned into API params. The URL format is plain
 // query strings (repeated keys for lists), not TanStack's JSON default, so
 // links stay readable: ?project=shop&attr=user.id:42&last=1h.
-import type { LogsParams, MetricQueryParams, MetricsParams, SpansParams } from './api'
+import type { LogsParams, MetricQueryParams, MetricsParams, Refresh, SpansParams } from './api'
+import { refreshOptions } from './dashboards'
 import { type Level, levels } from './format'
 import { isGoDuration, normalizeRange, rangeParams, type TimeRange } from './timeRange'
 
@@ -120,7 +121,23 @@ export type MetricSearch = RangeSearch & {
   environment?: string
   attr?: string[]
   step?: string
+  /** Editing a dashboard panel's query: the dashboard's uid and the panel's id. */
+  dashboard?: string
+  panel?: string
 }
+
+export type DashboardsSearch = { project?: string }
+
+export type DashboardSearch = RangeSearch & {
+  project?: string
+  service?: string
+  environment?: string
+  /** Overrides the dashboard's own auto-refresh for this view. */
+  refresh?: Refresh
+}
+
+const dashboardUID = /^[a-z0-9][a-z0-9-]{0,63}$/
+const panelID = /^[a-z0-9][a-z0-9-]{0,39}$/
 
 const aggregatePattern = /^(rate|increase|avg|min|max|sum|p[0-9]{1,2}(\.[0-9])?)$/
 
@@ -173,8 +190,30 @@ export function validateMetricSearch(raw: Raw): MetricSearch {
     environment: str(raw.environment),
     attr: attrs(raw.attr),
     step: step && isGoDuration(step) ? step : undefined,
+    dashboard: matching(raw.dashboard, dashboardUID),
+    panel: matching(raw.panel, panelID),
     ...rangeSearch(raw),
   }
+}
+
+export function validateDashboardsSearch(raw: Raw): DashboardsSearch {
+  return { project: str(raw.project) }
+}
+
+/** A missing range stays missing, so the page can fall back to the dashboard's own. */
+export function validateDashboardSearch(raw: Raw): DashboardSearch {
+  return {
+    project: str(raw.project),
+    service: str(raw.service),
+    environment: str(raw.environment),
+    refresh: oneOf(raw.refresh, refreshOptions),
+    ...rangeSearch(raw),
+  }
+}
+
+function matching(v: unknown, pattern: RegExp): string | undefined {
+  const s = str(v)
+  return s && pattern.test(s) ? s : undefined
 }
 
 export function validateTraceSearch(raw: Raw): TraceSearch {
