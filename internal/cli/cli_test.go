@@ -88,6 +88,17 @@ func newFakeAPI(t *testing.T) (*fakeAPI, *httptest.Server) {
 			_, _ = w.Write([]byte(attributesJSON))
 		case "GET /api/v1/metrics/query":
 			_, _ = w.Write([]byte(metricQueryJSON))
+		case "GET /api/v1/dashboards":
+			_, _ = w.Write([]byte(dashboardsJSON))
+		case "GET /api/v1/dashboards/shop":
+			_, _ = w.Write([]byte(dashboardJSON))
+		case "PUT /api/v1/dashboards/shop":
+			_, _ = w.Write([]byte(dashboardJSON))
+		case "PUT /api/v1/dashboards/stale":
+			w.WriteHeader(http.StatusConflict)
+			_, _ = w.Write([]byte(`{"error":"dashboard stale is at revision 4, not 3; reload it and try again"}`))
+		case "DELETE /api/v1/dashboards/shop":
+			w.WriteHeader(http.StatusNoContent)
 		case "GET /api/v1/traces/" + cycleTraceID:
 			_, _ = w.Write([]byte(cycleTraceJSON))
 		default:

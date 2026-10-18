@@ -46,6 +46,15 @@ func (c Client) PostJSON(ctx context.Context, path string, v any) ([]byte, error
 	return c.do(ctx, http.MethodPost, path, body)
 }
 
+// PutJSON puts v as JSON to path and returns the JSON body.
+func (c Client) PutJSON(ctx context.Context, path string, v any) ([]byte, error) {
+	body, err := json.Marshal(v)
+	if err != nil {
+		return nil, fmt.Errorf("encode request: %w", err)
+	}
+	return c.do(ctx, http.MethodPut, path, body)
+}
+
 // Delete sends DELETE to path.
 func (c Client) Delete(ctx context.Context, path string) error {
 	_, err := c.do(ctx, http.MethodDelete, path, nil)

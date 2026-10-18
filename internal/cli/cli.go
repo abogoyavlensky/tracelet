@@ -41,6 +41,10 @@ Commands:
   metrics query <name> [--aggregate A] [--group-by K] [--step S]
                                         Show a metric over time, per group
   services [--project P] [--last D]     List services with log, span, and point counts
+  dashboards list                       List dashboards
+  dashboards export <uid>               Print a dashboard as a file for apply
+  dashboards apply --file F             Create or replace the dashboard in F (- for stdin)
+  dashboards delete <uid> --yes         Delete a dashboard
 
 Every client command takes --url (default $TRACELET_URL or
 http://localhost:8080), --token (default $TRACELET_TOKEN), and --json.
@@ -96,6 +100,8 @@ func RunContext(ctx context.Context, args []string, stdout, stderr io.Writer) in
 		err = runMetrics(ctx, rest, stdout, stderr)
 	case "services":
 		err = runServices(ctx, rest, stdout, stderr)
+	case "dashboards":
+		err = runDashboards(ctx, rest, stdout, stderr)
 	default:
 		err = usageError{msg: fmt.Sprintf("unknown command %q", cmd)}
 	}
