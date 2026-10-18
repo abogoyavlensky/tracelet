@@ -24,7 +24,7 @@ import {
 } from '../dashboards'
 import { incompatibleSeries, lastValue, seriesLabel, toChartData } from '../metrics'
 import type { TimeRange } from '../timeRange'
-import { axisFormatter, displayUnit, formatValue, unitHeading } from '../units'
+import { axisFormatter, displayUnit, formatValue } from '../units'
 import { icons } from './icons'
 import { MetricChart } from './MetricChart'
 import { MetricLegend } from './MetricLegend'
@@ -138,9 +138,7 @@ function PanelBody({ panel, data }: { panel: StoredPanel; data: MetricResult }) 
           {formatValue(value, display)}
         </p>
         <p className="mt-1 text-[12px] text-muted">
-          {[unitHeading(display), panel.reduce === 'sum' ? 'total over the range' : 'latest']
-            .filter(Boolean)
-            .join(', ')}
+          {panel.reduce === 'sum' ? 'Total over the range' : 'Latest'}
         </p>
       </div>
     )
@@ -152,9 +150,7 @@ function PanelBody({ panel, data }: { panel: StoredPanel; data: MetricResult }) 
           <tr className="text-left text-[12px] text-muted">
             <th className="pb-1.5 font-normal">{data.group_by || 'Series'}</th>
             <th className="pb-1.5 text-right font-normal">
-              {[unitHeading(display), panel.reduce === 'sum' ? 'total' : 'latest']
-                .filter(Boolean)
-                .join(', ')}
+              {panel.reduce === 'sum' ? 'Total' : 'Latest'}
             </th>
           </tr>
         </thead>
@@ -299,6 +295,7 @@ function PanelControls({ panel, editing }: { panel: StoredPanel; editing: PanelE
         className="h-8 min-w-0 flex-1 basis-40 rounded-md border border-line bg-surface px-2 text-[13px] placeholder:text-subtle"
       />
       <SelectFilter
+        neutral
         label="Type"
         value={panel.type}
         options={types.map((t) => ({ value: t, label: typeLabels[t] }))}
@@ -309,6 +306,7 @@ function PanelControls({ panel, editing }: { panel: StoredPanel; editing: PanelE
         }}
       />
       <SelectFilter
+        neutral
         label="Width"
         value={String(panel.width)}
         options={[1, 2, 3, 4].map((w) => ({ value: String(w), label: `${w}/4` }))}
@@ -316,6 +314,7 @@ function PanelControls({ panel, editing }: { panel: StoredPanel; editing: PanelE
       />
       {panel.type !== 'timeseries' && (
         <SelectFilter
+          neutral
           label="Value"
           value={panel.reduce ?? 'last'}
           options={reduces.map((r) => ({ value: r, label: r === 'sum' ? 'Total' : 'Latest' }))}

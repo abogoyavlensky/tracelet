@@ -276,6 +276,7 @@ function DashboardSettings({
         className="h-9 min-w-0 flex-1 basis-56 rounded-md border border-line bg-surface px-2 text-sm md:h-8"
       />
       <SelectFilter
+        neutral
         label="Default range"
         value={draft.last}
         options={[
@@ -285,6 +286,7 @@ function DashboardSettings({
         onChange={(v) => onChange({ last: v })}
       />
       <SelectFilter
+        neutral
         label="Default refresh"
         value={draft.refresh}
         options={refreshOptions.map((r) => ({ value: r, label: refreshLabel(r) }))}
