@@ -207,6 +207,9 @@ func dashboardsDelete(ctx context.Context, args []string, stdout, stderr io.Writ
 	if err := e.client.Delete(ctx, path); err != nil {
 		return err
 	}
+	if e.json {
+		return json.NewEncoder(stdout).Encode(map[string]any{"uid": pos[0], "deleted": true})
+	}
 	fmt.Fprintf(stdout, "deleted dashboard %s\n", pos[0])
 	return nil
 }

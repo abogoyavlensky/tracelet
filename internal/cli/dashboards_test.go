@@ -107,4 +107,8 @@ func TestDashboardsDeleteNeedsYes(t *testing.T) {
 	require.Equal(t, 0, code, errOut)
 	assert.Equal(t, "deleted dashboard shop\n", out)
 	assert.Equal(t, http.MethodDelete, f.last.Method)
+
+	code, out, errOut = run(t, "dashboards", "delete", "shop", "--yes", "--json", "--url", srv.URL)
+	require.Equal(t, 0, code, errOut)
+	assert.JSONEq(t, `{"uid":"shop","deleted":true}`, out)
 }
