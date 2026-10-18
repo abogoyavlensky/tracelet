@@ -3,7 +3,9 @@
 // and reductions a query allows, and how the metric page and a panel trade
 // queries. Mirrors the server's rules in internal/dashboard.
 import type {
+  Dashboard,
   DashboardPanel,
+  DashboardWrite,
   MetricQueryParams,
   MetricResult,
   PanelMetric,
@@ -163,6 +165,18 @@ export function sameMetric(a: PanelMetric, b: PanelMetric): boolean {
     keys.every((k) => (a[k] ?? '') === (b[k] ?? '')) &&
     (a.attr ?? []).join('\u0000') === (b.attr ?? []).join('\u0000')
   )
+}
+
+/** A stored dashboard as a write, guarded by the revision it was read at. */
+export function dashboardWrite(d: Dashboard, panels: DashboardPanel[] = d.panels): DashboardWrite {
+  return {
+    title: d.title,
+    schema_version: d.schema_version,
+    last: d.last,
+    refresh: d.refresh,
+    panels,
+    revision: d.revision,
+  }
 }
 
 function compact<T extends object>(o: T): T {

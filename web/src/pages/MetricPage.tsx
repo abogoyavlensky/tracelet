@@ -4,6 +4,7 @@ import { keepPreviousData, useQuery } from '@tanstack/react-query'
 import { Link, useNavigate } from '@tanstack/react-router'
 import { useMemo, useState } from 'react'
 import { ApiError, getMetricAttributes, queryMetric } from '../api'
+import { AddToDashboard } from '../components/AddToDashboard'
 import { AttrFilter } from '../components/AttrFilter'
 import { rangeNavigation } from '../components/AppShell'
 import { FilterBar } from '../components/FilterBar'
@@ -11,6 +12,7 @@ import { icons } from '../components/icons'
 import { MetricChart } from '../components/MetricChart'
 import { MetricLegend } from '../components/MetricLegend'
 import { SelectFilter } from '../components/SelectFilter'
+import { EditQueryBar } from '../components/EditQueryBar'
 import { EmptyState, ErrorState, Loading, Notice } from '../components/States'
 import { TextFilter } from '../components/TextFilter'
 import { TimeRangePicker } from '../components/TimeRangePicker'
@@ -27,6 +29,7 @@ import {
   toChartData,
 } from '../metrics'
 import { type MetricSearch, metricApiParams } from '../search'
+import { sessionQuery } from '../session'
 import { normalizeRange, rangeParams } from '../timeRange'
 import { axisFormatter, displayUnit, formatValue, unitHeading } from '../units'
 
@@ -50,6 +53,9 @@ export function MetricPage({ name, search }: { name: string; search: MetricSearc
   const range = normalizeRange(search)
   const params = metricApiParams(name, filters)
   const narrow = useNarrow()
+  const { data: session } = useQuery(sessionQuery)
+  const admin = session?.scope === 'admin'
+  const editingPanel = admin && search.dashboard && search.panel
 
   const result = useQuery({
     queryKey: ['metric', params],
@@ -175,6 +181,15 @@ export function MetricPage({ name, search }: { name: string; search: MetricSearc
           onChange={(attr) => set({ attr: attr.length ? attr : undefined })}
         />
       </FilterBar>
+      {editingPanel && search.dashboard && search.panel && (
+        <EditQueryBar
+          name={name}
+          search={search}
+          project={project}
+          dashboard={search.dashboard}
+          panel={search.panel}
+        />
+      )}
       {data?.truncated && (
         <Notice>
           Showing the {data.series.length} largest groups of more. Narrow them with filters.
@@ -213,6 +228,11 @@ export function MetricPage({ name, search }: { name: string; search: MetricSearc
               <span>{data.aggregate}</span>
               {unitHeading(display) && <span>in {unitHeading(display)}</span>}
             </span>
+          )}
+          {admin && !editingPanel && (
+            <div className="ml-auto">
+              <AddToDashboard name={name} search={search} project={project} />
+            </div>
           )}
         </div>
         {result.isPending && project ? (

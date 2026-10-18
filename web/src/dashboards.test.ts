@@ -3,6 +3,7 @@ import type { MetricResult } from './api'
 import {
   allowedReduces,
   allowedTypes,
+  dashboardWrite,
   effectiveMetric,
   metricFromSearch,
   movePanel,
@@ -185,5 +186,31 @@ describe('metric page and panel queries', () => {
     expect(sameMetric({ name: 'm', attr: ['a:1'] }, { name: 'm', attr: ['a:1'] })).toBe(true)
     expect(sameMetric({ name: 'm', attr: ['a:1'] }, { name: 'm', attr: ['a:2'] })).toBe(false)
     expect(sameMetric({ name: 'm', aggregate: 'rate' }, { name: 'm' })).toBe(false)
+  })
+})
+
+describe('dashboardWrite', () => {
+  it('keeps the definition and the revision, and drops identity and times', () => {
+    const d = {
+      uid: 'shop',
+      revision: 3,
+      created_at: '2026-10-18T08:00:00Z',
+      updated_at: '2026-10-18T09:00:00Z',
+      title: 'Shop',
+      schema_version: 1,
+      last: '6h',
+      refresh: '30s' as const,
+      panels: [{ id: 'p1', type: 'stat' as const, width: 1, metric: { name: 'm' } }],
+    }
+    expect(dashboardWrite(d)).toEqual({
+      title: 'Shop',
+      schema_version: 1,
+      last: '6h',
+      refresh: '30s',
+      panels: d.panels,
+      revision: 3,
+    })
+    const extra = { type: 'timeseries' as const, metric: { name: 'n' } }
+    expect(dashboardWrite(d, [...d.panels, extra]).panels).toHaveLength(2)
   })
 })

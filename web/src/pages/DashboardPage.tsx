@@ -24,7 +24,7 @@ import { EmptyState, ErrorState, Loading, Notice } from '../components/States'
 import { TextFilter } from '../components/TextFilter'
 import { TimeRangePicker } from '../components/TimeRangePicker'
 import { useProject } from '../components/useProject'
-import { movePanel, refreshOptions } from '../dashboards'
+import { dashboardWrite, movePanel, refreshOptions } from '../dashboards'
 import type { DashboardSearch } from '../search'
 import { sessionQuery } from '../session'
 import { normalizeRange, presets, type TimeRange } from '../timeRange'
@@ -94,18 +94,7 @@ export function DashboardPage({ uid, search }: { uid: string; search: DashboardS
     if (!draft) return
     setSaving(true)
     try {
-      const saved = await putDashboard(
-        uid,
-        {
-          title: draft.title,
-          schema_version: draft.schema_version,
-          last: draft.last,
-          refresh: draft.refresh,
-          panels: draft.panels,
-          revision: draft.revision,
-        },
-        { project },
-      )
+      const saved = await putDashboard(uid, dashboardWrite(draft), { project })
       queryClient.setQueryData(key, saved)
       void queryClient.invalidateQueries({ queryKey: ['dashboards', project] })
       setDraft(null)
